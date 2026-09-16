@@ -1,0 +1,25 @@
+# Fully offline demo: no API key, no CLI, no network.
+# Reproduces the Dream-RSI loop end to end on a cheap multi-modal search task.
+name: synthetic
+task: synthetic
+task_config: {dim: 4}
+
+mode: dream            # "dream" = Dream-RSI, "fixed" = Recursive Fixed Exploration
+rounds: 6              # outer iterations T
+revisions: 3           # M policy revisions per offline phase
+
+# Resource budget -- identical for both modes, as in Section 4.
+max_parallelism: 6     # W concurrent workers
+max_decision_rounds: 40
+branch_count: 6        # initial grid width  (plan_grid may change it later)
+refine_count: 12       # initial grid depth  (R refinements after each root)
+budget: null           # optional hard probe cap per online round
+
+beta: 0.62
+betas: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+lam: 0.25              # pareto.reward = pareto.auc - lam * parallel_penalty
+seed: 0
+
+discovery_agent: mock
+policy_developer: mock
+out_dir: runs

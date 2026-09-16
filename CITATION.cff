@@ -1,0 +1,51 @@
+cff-version: 1.2.0
+title: "OpenDream-RSI: an open reproduction of Dream-RSI"
+message: "If you use this software, please cite the original paper as well."
+type: software
+license: Apache-2.0
+repository-code: "https://github.com/zhengkid/Dream-RSI"
+abstract: >-
+  An independent open reproduction of the Dream-RSI framework: online
+  exploration into a discovery tree, that tree served back as a replay
+  simulator, and dreaming-based improvement of the exploration policy in a
+  recursive self-improvement loop.
+references:
+  - type: article
+    title: "Dream-RSI: Recursive Self-Improvement through Evolving Worlds"
+    year: 2026
+    url: "https://www.dream-rsi.com"
+    authors:
+      - family-names: Zheng
+        given-names: Tong
+      - family-names: Wu
+        given-names: Xidong
+      - family-names: Zhang
+        given-names: Zheng
+      - family-names: He
+        given-names: Zhankui
+      - family-names: Zhang
+        given-names: Chaoyi
+      - family-names: Coleman
+        given-names: Benjamin
+      - family-names: Wei
+        given-names: Ruoqiao
+      - family-names: Bai
+        given-names: Di
+      - family-names: Liu
+        given-names: Haolin
+      - family-names: Liu
+        given-names: Rui
+      - family-names: Wang
+        given-names: Xue
+      - family-names: Zhuan
+        given-names: Yue
+      - family-names: Kang
+        given-names: Wang-Cheng
+      - family-names: Xiang
+        given-names: Renkai
+      - family-names: Huang
+        given-names: Heng
+      - family-names: Cheng
+        given-names: Xinwu
+      - family-names: Guo
+        given-names: Yunsong

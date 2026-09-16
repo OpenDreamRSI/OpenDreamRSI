@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opendreamrsi"
+version = "0.1.0"
+description = "Open reproduction of Dream-RSI: Recursive Self-Improvement through Evolving Worlds"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "Apache-2.0"}
+keywords = ["recursive self-improvement", "world models", "agents", "scientific discovery"]
+classifiers = [
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = ["numpy>=1.23", "PyYAML>=6.0"]
+
+[project.optional-dependencies]
+tasks = ["scikit-learn>=1.2", "scipy>=1.9"]
+agents = ["anthropic>=0.40", "openai>=1.40"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+dreamrsi = "dreamrsi.cli:main"
+
+[tool.setuptools]
+packages = ["dreamrsi", "dreamrsi.agents", "dreamrsi.policy", "dreamrsi.policy.library",
+            "dreamrsi.prompts", "dreamrsi.tasks", "see", "see.policy"]
+
+[tool.setuptools.package-data]
+"dreamrsi.prompts" = ["*.md"]
+"dreamrsi.tasks" = ["_ompshim/*.h"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

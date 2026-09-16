@@ -1,0 +1,23 @@
+# Mathematical optimization: sum-difference, circle packing, autocorrelation.
+# Switch `task` to sum_difference | circle_packing | autocorrelation.
+name: math
+task: sum_difference
+task_config:
+  max_size: 400
+  timeout: 60
+
+mode: dream
+rounds: 10             # the paper runs 10 rounds on the math tasks
+revisions: 3
+
+max_parallelism: 8
+max_decision_rounds: 20
+branch_count: 8
+refine_count: 10
+beta: 0.62
+lam: 0.25
+seed: 0
+
+discovery_agent: cli
+policy_developer: cli
+out_dir: runs

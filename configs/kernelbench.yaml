@@ -1,0 +1,27 @@
+# GPU kernel engineering (KernelBench): VGG16, LayerNorm, ConvDiv, ConvMax.
+# Requires a CUDA box and your own KernelBench evaluation command.
+name: kernelbench
+task: kernelbench
+task_config:
+  level: 1
+  problem: ConvDiv
+  timeout: 900
+  command: >-
+    python -m kernelbench.eval --level {level} --problem {problem}
+    --candidate {program} --json
+
+mode: dream
+rounds: 9
+revisions: 3
+
+max_parallelism: 8
+max_decision_rounds: 16
+branch_count: 8
+refine_count: 12
+beta: 0.62
+lam: 0.25
+seed: 0
+
+discovery_agent: cli
+policy_developer: cli
+out_dir: runs

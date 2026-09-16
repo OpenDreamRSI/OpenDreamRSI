@@ -1,0 +1,32 @@
+# Algorithm engineering: the Lasso regularization path (Appendix A, Problem 1).
+#
+# Needs a real coding agent.  Point `discovery_agent` at a CLI you have installed
+# (Gemini CLI, Claude Code, Codex, ...) or at a model API.  The native route also
+# needs Eigen and a C++ compiler; without them candidates may still use the
+# pure-Python `solve_path` route.
+name: lasso
+task: lasso
+task_config:
+  n_instances: 17      # the 17 synthetic regimes SimpleTES sweeps
+  n_timing: 5          # timing instances, disjoint from the correctness ones
+  n_lambda: 50
+  repeats: 3
+  tol: 1.0e-6
+  # eigen_include: /opt/homebrew/include/eigen3
+  # compiler: g++
+
+mode: dream
+rounds: 5              # the paper runs 5 recursive rounds on this task
+revisions: 3
+
+max_parallelism: 10    # 10 parallel workspaces
+max_decision_rounds: 12
+branch_count: 10
+refine_count: 11       # 10 x 11 = 110 discovery-agent calls per fixed round
+beta: 0.62
+lam: 0.25
+seed: 0
+
+discovery_agent: cli   # "cli" | "llm" | "mock"
+policy_developer: cli
+out_dir: runs

@@ -1,0 +1,26 @@
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+   Full text: https://www.apache.org/licenses/LICENSE-2.0.txt
+
+   NOTE ON SCOPE
+   -------------
+   This repository is an independent open reproduction of the method described
+   in "Dream-RSI: Recursive Self-Improvement through Evolving Worlds"
+   (Zheng et al., 2026).  It is not affiliated with or endorsed by the authors
+   or their institutions.  The two prompts under dreamrsi/prompts/ and the
+   solver under discovered/lasso_path/ are reproduced from the paper's
+   appendices and remain the work of the paper's authors.
