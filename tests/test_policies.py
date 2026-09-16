@@ -178,3 +178,71 @@ class OptimalPolicy(LLMDesignedMethod):
 '''
     ev = evaluate_policy(load_policy_source(src, name="illegal"), pool(1), collect_traces=False)
     assert ev.summary.attainment == 0.0
+
+
+def test_a_crash_is_scored_on_what_the_policy_actually_did():
+    """A revision that explored well and then hit a typo is not a revision that
+    did nothing, and the reflector is asked to tell them apart.
+
+    Measured: a Haiku-written revision treated `question.observed()` values as
+    dicts, crashed on its second round, and was recorded as 0 probes / reward
+    -0.25 -- the same floor as a policy that never selected a batch. It had in
+    fact revealed a full batch and reached 0.915 attainment.
+    """
+    src = '''
+from see.policy.api import LLMDesignedMethod, GridPlan, SimResult, _record_curve
+NAME = "OptimalPolicy"
+
+
+class OptimalPolicy(LLMDesignedMethod):
+    NAME = "OptimalPolicy"
+
+    def solve(self, question, budget=None):
+        question.reset()
+        res = SimResult()
+        question.probe_batch(question.legal_roots()[:2],
+                             on_reveal=lambda _: _record_curve(res, question))
+        raise AttributeError("'Observation' object has no attribute 'get'")
+
+    def plan_grid(self, context):
+        return GridPlan(2, 1, "x")
+'''
+    ev = evaluate_policy(load_policy_source(src, name="partial"), pool(1),
+                         collect_traces=True)
+    point = ev.points[0]
+    assert point.total_probes == 2          # the batch it did reveal is counted
+    assert point.decision_rounds == 1
+    assert ev.summary.attainment > 0.0      # and what it attained is measured
+    assert "crash" in ev.traces[0]["stopped_reason"]
+
+
+def test_a_crashing_policy_can_never_be_selected():
+    """Scoring it low is not enough -- the winner gets redeployed online.
+
+    `points` is appended for every episode, crashed or not, so the old
+    "errors and not points" guard never fired; a crasher was held back only by
+    the floor reward of an empty episode. Salvaging the trajectory removes that
+    floor, so the disqualification has to be explicit.
+    """
+    src = '''
+from see.policy.api import LLMDesignedMethod, GridPlan, SimResult, _record_curve
+NAME = "OptimalPolicy"
+
+
+class OptimalPolicy(LLMDesignedMethod):
+    NAME = "OptimalPolicy"
+
+    def solve(self, question, budget=None):
+        question.reset()
+        res = SimResult()
+        question.probe_batch(question.legal_roots()[:2],
+                             on_reveal=lambda _: _record_curve(res, question))
+        raise RuntimeError("boom")
+
+    def plan_grid(self, context):
+        return GridPlan(2, 1, "x")
+'''
+    ev = evaluate_policy(load_policy_source(src, name="crasher"), pool(1),
+                         collect_traces=False)
+    assert ev.error and "crash" in ev.error
+    assert ev.score == float("-inf")        # so max() over candidates skips it

@@ -31,7 +31,7 @@ from .objective import (
     replay_value,
     summarize_sweep,
 )
-from .policy.api import LLMDesignedMethod
+from .policy.api import LLMDesignedMethod, finalize_result
 from .policy.loader import PolicyRejected, PolicySpec, load_policy_source
 from .types import ParetoSummary, SimResult, SweepPoint
 from .world import IllegalBatch, ReplayWorld, SimulatorPool
@@ -75,11 +75,36 @@ def replay_episode(policy: LLMDesignedMethod, world: ReplayWorld) -> Tuple[SimRe
     try:
         result = policy.solve(world, None)
     except IllegalBatch as exc:
-        return SimResult(stopped_reason=f"illegal_batch: {exc}"), f"illegal batch: {exc}"
+        return _salvage(world, f"illegal_batch: {exc}"), f"illegal batch: {exc}"
     except Exception as exc:  # noqa: BLE001 - the developer agent wrote this code
-        return (SimResult(stopped_reason=f"crash: {exc}"),
+        return (_salvage(world, f"crash: {exc}"),
                 f"policy crashed: {type(exc).__name__}: {exc}")
     return result, None
+
+
+def _salvage(world: ReplayWorld, reason: str) -> SimResult:
+    """Close a failed episode with the *world's* record of what it really did.
+
+    A policy that fails does not get to file its own report -- it never reaches
+    ``finalize_result`` -- and returning a blank :class:`SimResult` scores it as
+    though it had done nothing. That is wrong in a way that matters to the loop:
+    a revision that explored competently for three rounds and then hit a typo
+    becomes indistinguishable from one that never selected a batch, both landing
+    on the same floor reward, and the reflector Appendix B.2 asks to "diagnose
+    from the trajectory" is handed no trajectory to diagnose.
+
+    The world knows better, so it is asked instead. Its round log carries
+    ``(total_probes, best_so_far)`` after every completed round, which is the
+    attainment curve, and is recorded by the simulator rather than by the policy
+    -- so it survives exactly the failure that lost the policy's own copy.
+    """
+    result = SimResult()
+    result.curve = [
+        (int(row["total_probes"]),
+         float("-inf") if row["best_so_far"] is None else float(row["best_so_far"]))
+        for row in world.round_log
+    ]
+    return finalize_result(world, result, reason)
 
 
 def evaluate_policy(spec: PolicySpec, pool: SimulatorPool, *,
@@ -160,7 +185,18 @@ def evaluate_policy(spec: PolicySpec, pool: SimulatorPool, *,
         points=points,
         traces=traces,
         warnings=list(spec.warnings),
-        error="; ".join(errors[:3]) if (errors and not points) else None,
+        # Any failed episode disqualifies the version, which makes ``score``
+        # ``-inf`` and keeps it out of selection. It is not enough to score a
+        # crasher low: the selected policy is *redeployed online*, where the
+        # same crash costs a whole round of real discovery-agent calls. Before
+        # :func:`_salvage` this was accidentally load-bearing in a different
+        # way -- a crashed episode still appended a zeroed ``SweepPoint``, so
+        # ``points`` was never empty, so this branch never fired, and only the
+        # floor reward of an empty episode kept crashers from winning. Salvaging
+        # the trajectory removes that floor, so the disqualification has to be
+        # real. The points and traces are still recorded: the reflector is meant
+        # to read how far the version got before it broke.
+        error="; ".join(errors[:3]) if errors else None,
     )
 
 
