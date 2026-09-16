@@ -128,3 +128,40 @@ def test_evaluate_policy_costs_no_agent_calls(tmp_path):
     # a full beta sweep over the frozen tree: pure replay, nothing is executed
     assert len(ev.points) == 6
     assert ev.summary.attainment == pytest.approx(1.0)
+
+
+def test_recovering_from_a_failed_parent_keeps_the_gain_shares_finite():
+    """`plan_grid` reads these shares; NaN in them silently poisons the next grid.
+
+    A refinement that succeeds where its parent failed has no finite gain over
+    that parent -- `score - (-inf)` is `+inf` -- and two such branches made the
+    shares `inf / inf`. The baseline is the reference in that case.
+    """
+    import math
+
+    from dreamrsi.online import live_cycle_manifest
+    from dreamrsi.tree import DiscoveryTree, Node
+    from dreamrsi.types import ROOT_ID, GridPlan, SimResult, cell_id
+
+    tree = DiscoveryTree(world_id="w", baseline_score=1.0, task="synthetic")
+    for branch in (0, 1):
+        tree.add(Node(cell_id=cell_id(branch, 0), branch=branch, attempt=0,
+                      parent_id=ROOT_ID, seq=0, score=float("-inf"),
+                      evaluated=True, valid=False, fail_class="timeout",
+                      error="exceeded"))
+        tree.add(Node(cell_id=cell_id(branch, 1), branch=branch, attempt=1,
+                      parent_id=cell_id(branch, 0), seq=1, score=2.0 + branch,
+                      evaluated=True, valid=True, fail_class="ok"))
+
+    class _World:
+        agent_calls, wall_clock = 4, 1.0
+
+    manifest = live_cycle_manifest(
+        tree, SimResult(total_probes=4, decision_rounds=2,
+                        effective_sequential_rounds=2, best_score=3.0),
+        GridPlan(branch_count=2, refine_count=1, reason="x"), _World())
+
+    for key in ("early_gain_share", "late_gain_share"):
+        assert math.isfinite(manifest[key]), (key, manifest[key])
+    assert manifest["early_gain_share"] + manifest["late_gain_share"] == pytest.approx(1.0)
+    assert manifest["late_gain_share"] == pytest.approx(1.0)   # all of it was depth

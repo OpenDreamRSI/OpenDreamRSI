@@ -63,6 +63,10 @@ class RSIConfig:
     #: of all of ``H_t``.  ``None`` keeps the paper's evolving-worlds setting,
     #: where the simulator pool grows with every completed round.
     pool_window: Optional[int] = None
+    #: Which engine walks the tree: ``"native"`` (:mod:`dreamrsi.online`) or
+    #: ``"agentdescent"`` (``agentdescent.dream.explore``).  The choice is not
+    #: meant to be observable -- see :mod:`dreamrsi.backends`.
+    engine: str = "native"
     out_dir: str = "runs"
     discovery_agent: str = "mock"
     policy_developer: str = "mock"
@@ -79,6 +83,25 @@ class RSIConfig:
 def _progress(*args: Any) -> None:
     """Progress goes to stderr; stdout stays machine-readable."""
     print(*args, file=sys.stderr, flush=True)
+
+
+#: The engines ``RSIConfig.engine`` may name.
+ENGINES = ("native", "agentdescent")
+
+
+def online_engine(name: str):
+    """The ``run_online_cycle`` implementation ``name`` selects.
+
+    Both satisfy the same contract -- same arguments, same return value, same
+    files written -- so this is the only place either is named.
+    """
+    if name == "native":
+        return run_online_cycle
+    if name == "agentdescent":
+        from .backends.agentdescent_engine import run_online_cycle as engine
+
+        return engine
+    raise KeyError(f"unknown engine {name!r} (choose from {', '.join(ENGINES)})")
 
 
 def build_components(config: RSIConfig):
@@ -146,7 +169,7 @@ def run_rsi(config: RSIConfig, *, task: Task, agent: DiscoveryAgent,
             f"grid W={plan.branch_count} R={plan.refine_count} "
             f"({plan.reason or 'no reason given'})")
 
-        cycle = run_online_cycle(
+        cycle = online_engine(config.engine)(
             task=task, agent=agent, policy=policy, plan=plan,
             run_dir=round_dir,
             history_dir=layout.history_dir,

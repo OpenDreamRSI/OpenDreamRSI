@@ -24,7 +24,7 @@ from . import __version__, prompts
 from .agents import make_policy_developer
 from .dreaming import DEFAULT_BETA_GRID, dream, evaluate_policy
 from .policy.loader import load_policy_module, load_policy_source
-from .rsi import DREAM, FIXED, RSIConfig, build_components, run_rsi
+from .rsi import DREAM, ENGINES, FIXED, RSIConfig, build_components, run_rsi
 from .storage import write_json
 from .tasks import available as available_tasks
 from .tree import DiscoveryTree
@@ -49,7 +49,8 @@ def load_config(path: Optional[str], overrides: Dict[str, Any]) -> RSIConfig:
 def cmd_run(args: argparse.Namespace) -> int:
     config = load_config(args.config, {"mode": args.mode, "rounds": args.rounds,
                                        "name": args.name, "seed": args.seed,
-                                       "task": args.task, "out_dir": args.out_dir})
+                                       "task": args.task, "engine": args.engine,
+                                       "out_dir": args.out_dir})
     if args.task and not args.name:
         config.name = f"{config.name}-{args.task}"   # keep run dirs distinct
     task, agent, developer = build_components(config)
@@ -64,7 +65,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 def cmd_compare(args: argparse.Namespace) -> int:
     """Run Recursive Fixed Exploration and Dream-RSI under identical budgets."""
     base = load_config(args.config, {"rounds": args.rounds, "seed": args.seed,
-                                     "out_dir": args.out_dir})
+                                     "engine": args.engine, "out_dir": args.out_dir})
     results = {}
     for mode in (FIXED, DREAM):
         config = RSIConfig.from_dict({**base.__dict__, "mode": mode,
@@ -415,6 +416,8 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--rounds", type=int, help="outer iterations T")
         sp.add_argument("--seed", type=int)
         sp.add_argument("--out-dir", dest="out_dir", default=None)
+        sp.add_argument("--engine", choices=list(ENGINES), default=None,
+                        help="which engine walks the tree (default: native)")
         return sp
 
     r = common(sub.add_parser("run", help="run one recursive self-improvement loop"))

@@ -21,13 +21,16 @@ dependencies = ["numpy>=1.23", "PyYAML>=6.0"]
 [project.optional-dependencies]
 tasks = ["scikit-learn>=1.2", "scipy>=1.9"]
 agents = ["anthropic>=0.40", "openai>=1.40"]
+# The alternative loop engine (`--engine agentdescent`).
+agentdescent = ["agentdescent>=0.5"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]
 dreamrsi = "dreamrsi.cli:main"
 
 [tool.setuptools]
-packages = ["dreamrsi", "dreamrsi.agents", "dreamrsi.experiments", "dreamrsi.policy",
+packages = ["dreamrsi", "dreamrsi.agents", "dreamrsi.backends",
+            "dreamrsi.experiments", "dreamrsi.policy",
             "dreamrsi.policy.library", "dreamrsi.prompts", "dreamrsi.tasks",
             "see", "see.policy"]
 

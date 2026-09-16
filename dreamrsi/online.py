@@ -243,6 +243,13 @@ def live_cycle_manifest(tree: DiscoveryTree, result, plan: GridPlan, world: Live
     for node in tree:
         parent = tree.get(node.parent_id)
         ref = parent.score if parent is not None else baseline
+        # A refinement that succeeds where its parent failed has no finite gain
+        # over that parent -- `score - (-inf)` is `+inf`, and two of those make
+        # the shares below `inf / inf`, i.e. NaN, in a field `plan_grid` reads.
+        # The baseline is the only meaningful reference left: the branch is worth
+        # what it has recovered relative to where the whole run started.
+        if ref == float("-inf"):
+            ref = baseline
         gain = max(0.0, (node.score - ref)) if node.score != float("-inf") else 0.0
         if node.attempt == 0:
             roots_gain += max(0.0, node.score - baseline) if node.score != float("-inf") else 0.0
