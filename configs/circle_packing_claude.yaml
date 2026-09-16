@@ -19,7 +19,14 @@ name: circle-packing-claude
 task: circle_packing
 task_config:
   n: 26
-  timeout: 60          # seconds a candidate may run before it counts as a timeout
+  # Seconds a candidate may run before it is classed as a `timeout` failure.
+  # Keep this generous. The score here is sum of radii with no timing term, so a
+  # slow candidate is not a worse one -- and a real agent asked to improve an
+  # optimizer will reach for more restarts and more iterations, which is exactly
+  # the kind of proposal a tight budget kills before it can be judged. At 60s
+  # every depth-1 refinement in a Haiku round timed out, which measured the
+  # evaluator's patience rather than the agent's idea.
+  timeout: 240
   agent:
     command: >-
       claude -p --model claude-haiku-4-5 --permission-mode acceptEdits
