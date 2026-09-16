@@ -62,7 +62,10 @@ def _cycle(engine, tmp_path, source, *, beta, branch_count=4, refine_count=3,
         "scores": {c: n.score for c, n in sorted(tree.nodes.items())},
         "seqs": {c: n.seq for c, n in sorted(tree.nodes.items())},
         "fail_classes": {c: n.fail_class for c, n in sorted(tree.nodes.items())},
+        # `seconds` is wall clock, which is never reproducible; that it is
+        # *measured at all* on both engines is asserted separately below.
         "manifest": {k: v for k, v in out["manifest"].items() if k != "seconds"},
+        "measured_seconds": out["manifest"]["seconds"] >= 0.0,
     }
 
 
@@ -194,6 +197,128 @@ def test_an_unknown_engine_names_the_ones_that_exist():
         online_engine("nope")
 
 
+# -- stage 2: the replay half ------------------------------------------------
+def _worlds(tmp_path, n=3):
+    """A few real recorded worlds, built once with the native engine."""
+    history = os.path.join(str(tmp_path), "pool", "history")
+    os.makedirs(history, exist_ok=True)
+    task = make_task("synthetic", {})
+    agent = make_discovery_agent("mock", task, {"seed": 0})
+    paths = task.prepare(history)
+    trees = []
+    for i, (name, source) in enumerate(CANDIDATES[:n]):
+        spec = load_policy_source(source, name=name, strict=False)
+        out = native_cycle(
+            task=task, agent=agent, policy=spec.instantiate({"beta": 0.62}),
+            plan=GridPlan(branch_count=4, refine_count=3, reason="pool"),
+            run_dir=os.path.join(history, f"r{i}"), history_dir=history,
+            baseline_dir=paths["baseline_dir"], problem_file=paths["problem_file"],
+            baseline_score=task.baseline_score(history), max_parallelism=3,
+            max_decision_rounds=12, world_id=f"w{i}", cycle=1)
+        trees.append(out["tree"])
+    return trees
+
+
+def _pools(trees):
+    from dreamrsi.backends.agentdescent_replay import AgentDescentSimulatorPool
+    from dreamrsi.backends.agentdescent_tree import to_agentdescent
+    from dreamrsi.world import SimulatorPool
+
+    return (SimulatorPool(trees, max_parallelism=3, max_decision_rounds=12),
+            AgentDescentSimulatorPool([to_agentdescent(t) for t in trees],
+                                      max_parallelism=3, max_decision_rounds=12,
+                                      task="synthetic"))
+
+
+def test_both_pools_describe_the_same_history(tmp_path):
+    native, agentdescent = _pools(_worlds(tmp_path))
+    assert native.summary() == agentdescent.summary()
+    assert len(native) == len(agentdescent)
+
+
+@pytest.mark.parametrize("name,source", CANDIDATES, ids=[n for n, _ in CANDIDATES])
+def test_the_beta_sweep_is_the_same_on_either_pool(tmp_path, name, source):
+    """The replay objective is what selection reads, so it must not move."""
+    from dreamrsi.dreaming import evaluate_policy
+
+    native, agentdescent = _pools(_worlds(tmp_path))
+    spec = load_policy_source(source, name=name, strict=False)
+    betas = (0.0, 0.5, 1.0)
+    a = evaluate_policy(spec, native, betas=betas, base_config={"beta": 0.62})
+    b = evaluate_policy(spec, agentdescent, betas=betas, base_config={"beta": 0.62})
+
+    assert a.summary.to_dict() == b.summary.to_dict()
+    assert [p.to_dict() for p in a.points] == [p.to_dict() for p in b.points]
+    assert a.score == b.score
+
+
+def test_replay_on_the_agentdescent_world_reveals_the_named_branch(tmp_path):
+    """Not the next one in recorded order, which is agentdescent's own rule.
+
+    ``agentdescent`` gives the root a multiplicity of ``W`` and reveals
+    ``children(root)[taken]`` positionally. Here a policy names the branch, and
+    the cell it names is the cell it gets -- which is what makes a cell id mean
+    anything to a policy.
+    """
+    from dreamrsi.backends.agentdescent_replay import AgentDescentReplayWorld
+    from dreamrsi.backends.agentdescent_tree import to_agentdescent
+
+    trees = _worlds(tmp_path, n=1)
+    world = AgentDescentReplayWorld(to_agentdescent(trees[0]), max_parallelism=3,
+                                    max_decision_rounds=12)
+    world.reset()
+    (obs,) = world.probe_batch(["b2a0"])
+    assert obs.cell_id == "b2a0"
+    assert obs.score == trees[0].nodes["b2a0"].score
+
+
+def test_a_branch_that_ended_is_not_offered_rather_than_barren(tmp_path):
+    """agentdescent would offer it and charge a wasted worker; this repo does not."""
+    from dreamrsi.backends import require_agentdescent
+    from dreamrsi.backends.agentdescent_replay import AgentDescentReplayWorld
+
+    dream = require_agentdescent()
+    adt = dream.DiscoveryTree.rooted(0.0, name="short", detail={"cell": "root"})
+    first = adt.add(0, dream.Attempt(score=1.0, detail={"cell": "b0a0"}))
+    adt.add(first.index, dream.Attempt(score=2.0, detail={"cell": "b0a1"}))
+
+    world = AgentDescentReplayWorld(adt, max_parallelism=2, max_decision_rounds=8)
+    world.reset()
+    world.probe_batch(["b0a0"])
+    assert world.legal_actions() == ["b0a1"]
+    world.probe_batch(["b0a1"])
+    assert world.legal_actions() == []          # exhausted, and simply not offered
+
+
+def test_an_illegal_batch_raises_instead_of_being_counted(tmp_path):
+    """agentdescent normalises and scores it; this repo fails loudly."""
+    from dreamrsi.backends.agentdescent_replay import AgentDescentReplayWorld
+    from dreamrsi.backends.agentdescent_tree import to_agentdescent
+    from dreamrsi.world import IllegalBatch
+
+    world = AgentDescentReplayWorld(to_agentdescent(_worlds(tmp_path, n=1)[0]),
+                                    max_parallelism=2, max_decision_rounds=12)
+    world.reset()
+    with pytest.raises(IllegalBatch, match="duplicate"):
+        world.probe_batch(["b0a0", "b0a0"])
+    with pytest.raises(IllegalBatch, match="max_parallelism"):
+        world.probe_batch(["b0a0", "b1a0", "b2a0"])
+    with pytest.raises(IllegalBatch, match="illegal cells"):
+        world.probe_batch(["b0a1"])             # its parent is not revealed yet
+
+
+def test_replay_costs_no_generation_on_the_agentdescent_world(tmp_path):
+    from dreamrsi.backends.agentdescent_replay import AgentDescentReplayWorld
+    from dreamrsi.backends.agentdescent_tree import to_agentdescent
+
+    adt = to_agentdescent(_worlds(tmp_path, n=1)[0])
+    before = len(adt)
+    world = AgentDescentReplayWorld(adt, max_parallelism=3, max_decision_rounds=12)
+    spec = load_policy_source(baseline.source(), name="pi_1", strict=False)
+    spec.instantiate({"beta": 1.0}).solve(world, None)
+    assert len(adt) == before
+
+
 # -- the tree bridge ---------------------------------------------------------
 def _grid_tree():
     tree = DiscoveryTree(world_id="w", baseline_score=2.5, task="synthetic",
@@ -251,3 +376,27 @@ def test_a_tree_with_no_grid_name_is_refused_rather_than_truncated():
     assert adt.unreachable == 1
     with pytest.raises(ShapeError, match="re-expands"):
         from_agentdescent(adt)
+
+
+def test_the_engine_still_measures_the_batch_wall_clock(tmp_path):
+    """The engine owns the thread pool now, so the world has to time the wait.
+
+    Without this the manifest reports `seconds: 0.0` for every round on the
+    agentdescent engine -- a field that silently stops meaning anything.
+    """
+    root = str(tmp_path / "clock")
+    history = os.path.join(root, "history")
+    os.makedirs(history, exist_ok=True)
+    task = make_task("synthetic", {})
+    agent = make_discovery_agent("mock", task, {"seed": 0})
+    paths = task.prepare(history)
+    spec = load_policy_source(baseline.source(), name="pi_1", strict=False)
+    out = online_engine("agentdescent")(
+        task=task, agent=agent, policy=spec.instantiate({"beta": 1.0}),
+        plan=GridPlan(branch_count=3, refine_count=2, reason="clock"),
+        run_dir=os.path.join(history, "r0001"), history_dir=history,
+        baseline_dir=paths["baseline_dir"], problem_file=paths["problem_file"],
+        baseline_score=task.baseline_score(history), max_parallelism=3,
+        max_decision_rounds=8, world_id="w", cycle=1)
+    assert out["world"].wall_clock > 0.0
+    assert out["manifest"]["seconds"] > 0.0

@@ -89,6 +89,22 @@ def _progress(*args: Any) -> None:
 ENGINES = ("native", "agentdescent")
 
 
+def simulator_pool(config: RSIConfig):
+    """``H_t`` for the chosen engine.
+
+    On the agentdescent engine the pool holds the worlds ``explore()`` itself
+    recorded, so stage 2 replays that object rather than a copy of it.
+    """
+    if config.engine == "agentdescent":
+        from .backends.agentdescent_replay import AgentDescentSimulatorPool
+
+        return AgentDescentSimulatorPool(
+            max_parallelism=config.max_parallelism,
+            max_decision_rounds=config.max_decision_rounds, task=config.task)
+    return SimulatorPool(max_parallelism=config.max_parallelism,
+                         max_decision_rounds=config.max_decision_rounds)
+
+
 def online_engine(name: str):
     """The ``run_online_cycle`` implementation ``name`` selects.
 
@@ -139,8 +155,7 @@ def run_rsi(config: RSIConfig, *, task: Task, agent: DiscoveryAgent,
                               path=os.path.join(layout.history_dir, "r0000_init", "method.py"))
     policy_config: Dict[str, Any] = {"beta": config.beta}
 
-    pool = SimulatorPool(max_parallelism=config.max_parallelism,
-                         max_decision_rounds=config.max_decision_rounds)
+    pool = simulator_pool(config)
     manifests: List[Dict[str, Any]] = []
     live_trend: List[float] = []
     rounds: List[Dict[str, Any]] = []
@@ -186,7 +201,10 @@ def run_rsi(config: RSIConfig, *, task: Task, agent: DiscoveryAgent,
 
         manifest = cycle["manifest"]
         manifests.append(manifest)
-        pool.append(cycle["tree"])
+        # The agentdescent engine hands back the world it recorded itself; stage
+        # 2 then replays that object rather than a conversion of it.
+        pool.append(cycle.get("engine_tree") if config.engine == "agentdescent"
+                    else cycle["tree"])
         cumulative_calls += int(manifest.get("agent_calls", 0))
         best = manifest.get("best_score")
         live_trend.append(float("-inf") if best is None else float(best))
@@ -276,9 +294,11 @@ def _dream_pool(pool: SimulatorPool, config: RSIConfig) -> SimulatorPool:
     window = config.pool_window
     if not window or window >= len(pool):
         return pool
-    return SimulatorPool(pool.trees[-int(window):],
-                         max_parallelism=pool.max_parallelism,
-                         max_decision_rounds=pool.max_decision_rounds)
+    kwargs = {"max_parallelism": pool.max_parallelism,
+              "max_decision_rounds": pool.max_decision_rounds}
+    if hasattr(pool, "task"):
+        kwargs["task"] = pool.task           # the agentdescent pool carries it
+    return type(pool)(pool.trees[-int(window):], **kwargs)
 
 
 def _baked_beta(source: str, fallback: float) -> float:

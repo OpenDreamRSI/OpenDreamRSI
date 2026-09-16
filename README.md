@@ -24,6 +24,7 @@ This repository implements that loop end to end:
 | ③ Dreaming-based Policy Improvement | `M` policy revisions replayed over the pool | [`dreamrsi/dreaming.py`](dreamrsi/dreaming.py) |
 | outer RSI loop | `π_{t+1} = π_t^{m*}`, redeployed online | [`dreamrsi/rsi.py`](dreamrsi/rsi.py) |
 | — | does any of it hold up? | [`dreamrsi/experiments/`](dreamrsi/experiments/) |
+| — | the same loop on another engine | [`dreamrsi/backends/`](dreamrsi/backends/) |
 
 **The authors have not released their code** (as of writing, `zhengkid/Dream-RSI`
 contains the paper and assets only). This is an independent reimplementation
@@ -531,6 +532,52 @@ is there to detect.
 
 ---
 
+## Engines
+
+Stages 1 and 2 can run on [agentdescent](https://github.com/Birfy/agentdescent),
+whose `agentdescent.dream` implements the same three stages against its own
+primitives. Which engine walks the tree is meant to be invisible:
+
+```bash
+pip install -e ".[agentdescent]"
+dreamrsi run --config configs/synthetic.yaml --engine agentdescent
+```
+
+`tests/test_backend_agentdescent.py` is the proof, and it is deliberately blunt:
+run the same thing on both engines and diff everything a caller can see —
+batches, probe counts, decision and effective-sequential rounds, the curve, the
+round log, the recorded cells with their scores, sequence numbers and failure
+classes, the manifest, the trace after a round-trip through disk, the pool
+summary, every point of the beta sweep and the pareto reward. They agree exactly
+across three policies, four betas and three grid shapes, and a four-round loop
+agrees round for round including which version dreaming selected.
+
+**The interesting part is where they could not agree.** The two packages read
+three parts of Appendix B.2 differently, and only one reading can be in effect:
+
+| | `agentdescent` | here |
+|---|---|---|
+| a leaf whose branch ended | legal; reveals nothing and costs a worker | never offered |
+| an illegal batch | counted, and the reward carries the message | raises `IllegalBatch` |
+| a batch of roots | the root has multiplicity `W`; branches open in recorded order | the policy names the branch it wants |
+
+Both readings are defensible — agentdescent's charges a policy for a worker it
+would have wasted online, which is a real effect — but they score a policy
+differently. Since this repository's reading is its published semantics, the
+substitution keeps it: the world, its storage and the structural queries are
+agentdescent's, while the legal set, the failure behaviour, the addressing and
+the cost accounting stay here, inherited from `BaseWorld` rather than restated.
+
+Two bugs fell out of diffing the engines, both of which predate the backend:
+
+* `live_cycle_manifest` returned **NaN** gain shares whenever two branches
+  recovered from a failed parent — `score - (-inf)` is `+inf`, and two of those
+  make `inf/inf`. `plan_grid` reads that field to size the next grid.
+* the agentdescent engine reported `seconds: 0.0` for every round, because the
+  engine owns the thread pool and nothing was timing the wait.
+
+---
+
 ## Writing a policy
 
 A policy is a plain Python module defining `NAME` and
@@ -848,8 +895,8 @@ its mock agents, not about Dream-RSI's performance on the paper's benchmarks.
 ## Tests
 
 ```bash
-python3 -m pytest -q          # 121 passed, 1 skipped
-EIGEN_INCLUDE=/path/to/eigen3 python3 -m pytest -q   # 122 passed -- nothing skipped
+python3 -m pytest -q          # 152 passed, 1 skipped
+EIGEN_INCLUDE=/path/to/eigen3 python3 -m pytest -q   # 153 passed -- nothing skipped
 ```
 
 They cover tree invariants, world legality and cost accounting, both objectives,

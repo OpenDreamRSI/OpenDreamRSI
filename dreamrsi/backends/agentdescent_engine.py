@@ -39,6 +39,7 @@ import json
 import os
 import queue
 import threading
+import time
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from ..agents.base import DiscoveryAgent
@@ -88,8 +89,13 @@ class _BridgeWorld(LiveWorld):
         if not batch:
             return []
         prefix_size = len(self._observed)
+        # The engine owns the thread pool now, so the batch's wall clock is the
+        # time this side spends waiting on it -- the same quantity the native
+        # world measures around its own pool, and the one the manifest reports.
+        started = time.time()
         self._wanted.put(list(batch))
         answer = self._revealed.get()
+        self.wall_clock += time.time() - started
         if answer is _STOP:
             raise _Cancelled("the engine ended this rollout")
         if isinstance(answer, BaseException):
