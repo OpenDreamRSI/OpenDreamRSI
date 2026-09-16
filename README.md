@@ -568,13 +568,46 @@ substitution keeps it: the world, its storage and the structural queries are
 agentdescent's, while the legal set, the failure behaviour, the addressing and
 the cost accounting stay here, inherited from `BaseWorld` rather than restated.
 
-Two bugs fell out of diffing the engines, both of which predate the backend:
+### Tested on the paper's own worlds, not only the synthetic one
+
+That matters more than it sounds. The synthetic task has **no ties** — every
+attempt lands on its own score — and that hid a real bug through two rounds of
+green tests. Replaying the four recorded Appendix A worlds instead disagreed on
+`best_cell` for exactly the two where the ceiling equals the baseline:
+`sum_difference`, where four of nine attempts scored exactly `1.0`, and
+`autocorrelation`, where three of nine scored exactly `−2.0`. Several attempts
+failing to beat the baseline *is* the normal case on a task a small model cannot
+crack. `best_node` scans in node order with a strict `>`, so the first node
+holding the best score wins; a `max` over `(score, index)` returns the last, and
+no world without ties can tell them apart.
+
+A live round on a real task closes the loop the other way — a world **produced
+by** the agentdescent engine, replayed on both:
+
+```bash
+dreamrsi run --config configs/circle_packing_claude.yaml --engine agentdescent --mode fixed
+```
+
+```
+  b0a0  2.602174  ok           b0a1  1.426217  ok      b0a2  --  timeout
+  b1a0  2.438966  ok           b1a1  --  timeout       b1a2  2.602174  ok
+  b2a0  2.247744  ok           b2a1  1.951148  ok      b2a2  --  correctness
+```
+
+Nine real Claude Haiku 4.5 calls, 854s, best `2.6022` against the `2.1667`
+baseline — **+20%** — with the batch structure (`seq` 0,0,0 / 3,3,3 / 6,6,6) the
+native engine produces, and the trace recording `engine: agentdescent` so a
+world says who made it. Replayed afterwards, both engines give the same pool
+summary, the same sweep points and the same pareto reward on it.
+
+Three bugs fell out of diffing the engines, all of which predate the backend:
 
 * `live_cycle_manifest` returned **NaN** gain shares whenever two branches
   recovered from a failed parent — `score - (-inf)` is `+inf`, and two of those
   make `inf/inf`. `plan_grid` reads that field to size the next grid.
 * the agentdescent engine reported `seconds: 0.0` for every round, because the
   engine owns the thread pool and nothing was timing the wait.
+* the pool summary's `best_cell` and `successful` count, above.
 
 ---
 
@@ -895,8 +928,8 @@ its mock agents, not about Dream-RSI's performance on the paper's benchmarks.
 ## Tests
 
 ```bash
-python3 -m pytest -q          # 152 passed, 1 skipped
-EIGEN_INCLUDE=/path/to/eigen3 python3 -m pytest -q   # 153 passed -- nothing skipped
+python3 -m pytest -q          # 154 passed, 1 skipped
+EIGEN_INCLUDE=/path/to/eigen3 python3 -m pytest -q   # 155 passed -- nothing skipped
 ```
 
 They cover tree invariants, world legality and cost accounting, both objectives,
