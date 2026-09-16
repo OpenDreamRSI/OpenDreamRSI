@@ -4,9 +4,17 @@ The paper drives Gemini-3.1-Pro and Gemini-3.7-Flash through the Gemini CLI.
 Nothing here is specific to one vendor: a CLI agent is any command that can be
 launched inside a directory with a prompt and is trusted to edit files there.
 
-The command template accepts ``{prompt_file}``, ``{node_dir}``, ``{run_dir}``
-and ``{program}``.  The prompt is also piped on stdin, which is what most CLIs
-accept by default.
+The command template accepts ``{prompt_file}``, ``{node_dir}``, ``{run_dir}``,
+``{history_dir}``, ``{baseline_dir}``, ``{problem_file}`` and ``{program}``.
+The prompt is also piped on stdin, which is what most CLIs accept by default.
+
+The paths matter because Listing 1 tells the agent to read the *whole* history
+before proposing -- sibling ``attempt_*/`` dirs, ``$history_dir``,
+``$baseline_dir`` -- all of which sit outside the attempt directory the CLI is
+launched in.  A sandboxed CLI that only trusts its working directory has to be
+handed those paths explicitly (Claude Code's ``--add-dir``, for instance), so
+the template exposes them rather than leaving the agent to read a prompt that
+points at files it is not allowed to open.
 """
 
 from __future__ import annotations
@@ -48,9 +56,14 @@ class CLIDiscoveryAgent(DiscoveryAgent):
         with open(prompt_file, "w", encoding="utf-8") as fh:
             fh.write(prompt)
 
-        argv = shlex.split(self.command.format(
-            prompt_file=prompt_file, node_dir=ctx.node_dir, run_dir=ctx.run_dir,
-            program=os.path.join(ctx.node_dir, ctx.eval_program)))
+        argv = _argv(self.command,
+                     prompt_file=prompt_file,
+                     node_dir=ctx.node_dir,
+                     run_dir=ctx.run_dir,
+                     history_dir=ctx.history_dir,
+                     baseline_dir=ctx.baseline_dir,
+                     problem_file=ctx.problem_file,
+                     program=os.path.join(ctx.node_dir, ctx.eval_program))
         proc = subprocess.run(argv, input=prompt, capture_output=True, text=True,
                               cwd=ctx.node_dir, timeout=self.timeout,
                               env={**os.environ, **self.env})
@@ -96,8 +109,13 @@ class CLIPolicyDeveloper(PolicyDeveloper):
         with open(prompt_file, "w", encoding="utf-8") as fh:
             fh.write(prompt)
 
-        argv = shlex.split(self.command.format(
-            prompt_file=prompt_file, node_dir=workdir, run_dir=workdir, program=method_path))
+        argv = _argv(self.command,
+                     prompt_file=prompt_file,
+                     node_dir=workdir,
+                     run_dir=workdir,
+                     history_dir=request.history_dir,
+                     trace_pool_dir=request.trace_pool_dir,
+                     program=method_path)
         proc = subprocess.run(argv, input=prompt, capture_output=True, text=True,
                               cwd=workdir, timeout=self.timeout,
                               env={**os.environ, **self.env})
@@ -105,6 +123,25 @@ class CLIPolicyDeveloper(PolicyDeveloper):
             raise RuntimeError(f"{argv[0]} exited with {proc.returncode}")
         with open(method_path, "r", encoding="utf-8") as fh:
             return fh.read()
+
+
+def _argv(command: str, **paths: str) -> list:
+    """Fill the command template and split it into an argv.
+
+    ``{history_dir}`` is the one placeholder both agents supply, so it is the
+    safe choice for a shared template.  A placeholder the calling agent has no
+    value for is a configuration mistake, not a silent empty string -- an empty
+    substitution would drop the argument entirely once the command is split and
+    silently hand the CLI a different command than the one configured.
+    """
+    try:
+        filled = command.format(**paths)
+    except KeyError as exc:
+        raise KeyError(
+            f"unknown placeholder {exc} in command template {command!r}; "
+            f"this agent provides: {', '.join(sorted(paths))}"
+        ) from exc
+    return shlex.split(filled)
 
 
 def _json(payload: Any) -> str:

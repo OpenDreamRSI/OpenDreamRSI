@@ -90,7 +90,12 @@ def build_components(config: RSIConfig):
     task = make_task(config.task, config.task_config)
     agent = make_discovery_agent(config.discovery_agent, task,
                                  {"seed": config.seed, **config.task_config.get("agent", {})})
-    developer = (make_policy_developer(config.policy_developer)
+    # ``developer`` falls back to the discovery agent's settings, because the
+    # usual case is one CLI or one API key driving both roles; ``policy_agent``
+    # overrides it when the two should differ.
+    dev_config = dict(config.task_config.get("policy_agent")
+                      or config.task_config.get("agent", {}))
+    developer = (make_policy_developer(config.policy_developer, dev_config)
                  if config.mode == DREAM else None)
     return task, agent, developer
 

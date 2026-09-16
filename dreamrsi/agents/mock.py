@@ -148,7 +148,10 @@ class MockPolicyDeveloper(PolicyDeveloper):
     name = "mock-policy-developer"
 
     def __init__(self, sources: Optional[List[str]] = None,
-                 betas: Optional[List[float]] = None) -> None:
+                 betas: Optional[List[float]] = None, **_: Any) -> None:
+        # Extra keys are ignored rather than rejected: the runner hands the
+        # developer the discovery agent's settings by default, and a mock
+        # developer paired with a real discovery agent should still run.
         self.sources = list(sources or library.available())
         self.betas = list(betas or [0.62, 0.45, 0.8])
 

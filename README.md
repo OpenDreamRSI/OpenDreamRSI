@@ -427,11 +427,49 @@ The paper drives Gemini-3.1-Pro and Gemini-3.7-Flash through the Gemini CLI; the
 
 ```yaml
 discovery_agent: cli
-policy_developer: cli
+policy_developer: cli          # inherits `agent` below unless `policy_agent` is set
 task_config:
   agent:
-    command: "gemini --yolo"      # {prompt_file} {node_dir} {program} are substituted
+    command: "gemini --yolo"
+    timeout: 900               # seconds one discovery-agent call may take
 ```
+
+The template substitutes `{prompt_file}`, `{node_dir}`, `{run_dir}`,
+`{history_dir}`, `{baseline_dir}`, `{problem_file}` and `{program}`; the prompt
+is *also* piped on stdin, which is what most CLIs accept by default. Only
+`{history_dir}` is supplied to both agents, so it is the safe placeholder for a
+shared template — anything else raises an error naming the placeholder rather
+than silently dropping the argument.
+
+Those paths exist because Listing 1 tells the agent to read the whole history
+before proposing, and sibling attempts, the baseline and `problem.md` all sit
+*above* the attempt directory the CLI is launched in. A CLI that only trusts its
+working directory has to be handed them explicitly.
+
+### Verified: Claude Code on `circle_packing`
+
+[`configs/circle_packing_claude.yaml`](configs/circle_packing_claude.yaml) is a
+worked, tested example — pure Python, no compiler, a cheap evaluator, and a grid
+small enough that the whole round is a handful of model calls:
+
+```yaml
+task_config:
+  agent:
+    command: >-
+      claude -p --model claude-haiku-4-5 --permission-mode acceptEdits
+      --add-dir {history_dir}
+      --allowedTools Write Edit Read Glob Grep
+```
+
+```bash
+dreamrsi run --config configs/circle_packing_claude.yaml
+```
+
+Three details are load-bearing. `--permission-mode acceptEdits` is what keeps
+the CLI non-interactive without `--dangerously-skip-permissions`, which refuses
+to run as root. `--add-dir {history_dir}` is what lets the agent actually open
+the history the prompt tells it to read. And `--allowedTools` is variadic, so it
+has to come last — the prompt reaches the CLI on stdin, not as an argument.
 
 **The prompts are reproduced verbatim** from Appendix B — Listing 1 in
 [`prompts/exploration_prompt.md`](dreamrsi/prompts/exploration_prompt.md) and

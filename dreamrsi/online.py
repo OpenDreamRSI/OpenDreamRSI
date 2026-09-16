@@ -115,24 +115,30 @@ class LiveWorld(BaseWorld):
     # -- one CONTINUE(v) -----------------------------------------------------
     def _run_one(self, cid: str):
         meta = self.meta(cid)
-        node_dir = os.path.join(self.run_dir, "attempts", f"attempt_{cid}")
+        # Every path handed to an agent is absolute.  A CLI agent is launched
+        # *inside* the attempt directory, so a path relative to the runner's
+        # working directory would silently fail to resolve -- and the failure is
+        # invisible, because the prompt tells the agent to read the history and
+        # an agent that cannot find it simply proposes without one.
+        node_dir = os.path.abspath(os.path.join(self.run_dir, "attempts", f"attempt_{cid}"))
         os.makedirs(node_dir, exist_ok=True)
         parent_dir = None
         if meta.attempt > 0:
-            parent_dir = os.path.join(self.run_dir, "attempts", f"attempt_{meta.parent_id}")
+            parent_dir = os.path.abspath(
+                os.path.join(self.run_dir, "attempts", f"attempt_{meta.parent_id}"))
 
         siblings = []
-        attempts_root = os.path.join(self.run_dir, "attempts")
+        attempts_root = os.path.abspath(os.path.join(self.run_dir, "attempts"))
         if os.path.isdir(attempts_root):
             siblings = [os.path.join(attempts_root, d) for d in sorted(os.listdir(attempts_root))
                         if d.startswith("attempt_") and os.path.join(attempts_root, d) != node_dir]
 
         ctx = AttemptContext(
             node_dir=node_dir,
-            run_dir=self.run_dir,
-            history_dir=self.history_dir,
-            baseline_dir=self.baseline_dir,
-            problem_file=self.problem_file,
+            run_dir=os.path.abspath(self.run_dir),
+            history_dir=os.path.abspath(self.history_dir),
+            baseline_dir=os.path.abspath(self.baseline_dir),
+            problem_file=os.path.abspath(self.problem_file),
             eval_program=self.task.eval_program,
             branch=meta.branch,
             attempt=meta.attempt,

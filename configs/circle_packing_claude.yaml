@@ -1,0 +1,48 @@
+# Circle packing (Appendix A, Problem 3) driven by a real coding agent.
+#
+# This is the small end of the real-agent configs: the task is pure Python, so
+# it needs no compiler, and the evaluator is cheap (n + n(n-1)/2 constraint
+# checks). That makes it the cheapest honest test that the loop works with a
+# model rather than the mock hill-climber.
+#
+# The command below drives Claude Code non-interactively. The prompt arrives on
+# stdin (the CLI agent always pipes it) and the CLI is launched inside the
+# attempt directory, so `--add-dir {history_dir}` is what lets it honour
+# Listing 1's instruction to read the whole history -- sibling attempts, the
+# baseline and problem.md all live above the attempt directory.
+#
+#   dreamrsi run --config configs/circle_packing_claude.yaml
+#
+# Swap the command for any other coding-agent CLI; nothing here is specific to
+# one vendor. `--permission-mode acceptEdits` is what keeps it non-interactive.
+name: circle-packing-claude
+task: circle_packing
+task_config:
+  n: 26
+  timeout: 60          # seconds a candidate may run before it counts as a timeout
+  agent:
+    command: >-
+      claude -p --model claude-haiku-4-5 --permission-mode acceptEdits
+      --add-dir {history_dir}
+      --allowedTools Write Edit Read Glob Grep
+    timeout: 900       # seconds one discovery-agent call may take
+
+mode: fixed            # "dream" closes the loop; "fixed" is online exploration only
+rounds: 1
+revisions: 2
+
+# Deliberately small: every cell below is one real model call.
+max_parallelism: 3     # W concurrent workers
+max_decision_rounds: 8
+branch_count: 3        # 3 independent workspaces
+refine_count: 2        # up to 2 refinements each -> at most 9 calls per round
+budget: null
+
+beta: 0.62
+betas: [0.0, 0.5, 1.0]
+lam: 0.25
+seed: 0
+
+discovery_agent: cli
+policy_developer: cli  # only used when mode is "dream"
+out_dir: runs
