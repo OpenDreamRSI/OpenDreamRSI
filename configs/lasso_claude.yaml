@@ -1,0 +1,50 @@
+# The Lasso regularization path (Appendix A, Problem 1) driven by Claude Code.
+#
+# This is the paper's headline task and much harder than the math problems: a
+# candidate has to beat scikit-learn's coordinate descent on wall clock while
+# still satisfying `F_k(w) <= F_k(w_sklearn) + tol` on every held-out instance,
+# so a wrong answer that is fast scores nothing at all.
+#
+#   dreamrsi run --config configs/lasso_claude.yaml
+#
+# Without Eigen and a C++ compiler the native CPP_CODE route is unavailable and
+# candidates fall back to pure-Python `solve_path(X, y, lambdas)`. That is a real
+# handicap against a compiled baseline -- expect `correctness` and `timeout`
+# failures to be the common outcome rather than a win. Point the task at Eigen
+# with `eigen_include` below to open the native route.
+name: lasso-claude
+task: lasso
+task_config:
+  # Smaller than configs/lasso.yaml: each evaluation solves every instance, so
+  # the sweep is what makes a round expensive, not the model call.
+  n_instances: 6       # synthetic regimes used for the correctness check
+  n_timing: 2          # timing instances, disjoint from the correctness ones
+  n_lambda: 20
+  repeats: 1
+  tol: 1.0e-6
+  # eigen_include: /usr/include/eigen3
+  agent:
+    command: >-
+      claude -p --model claude-haiku-4-5 --permission-mode acceptEdits
+      --add-dir {history_dir}
+      --allowedTools Write Edit Read Glob Grep Bash
+    timeout: 1200      # this task needs more room than the math problems
+
+mode: fixed
+rounds: 1
+revisions: 2
+
+max_parallelism: 2
+max_decision_rounds: 6
+branch_count: 2
+refine_count: 1        # at most 4 real calls per round
+budget: null
+
+beta: 0.62
+betas: [0.0, 0.5, 1.0]
+lam: 0.25
+seed: 0
+
+discovery_agent: cli
+policy_developer: cli
+out_dir: runs

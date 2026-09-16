@@ -13,20 +13,29 @@
 #
 #   dreamrsi run --config configs/circle_packing_claude.yaml
 #
+# Every task ignores the knobs it does not read, so `--task` drives the other
+# two math problems of Appendix A through the same agent:
+#
+#   dreamrsi run --config configs/circle_packing_claude.yaml --task sum_difference
+#   dreamrsi run --config configs/circle_packing_claude.yaml --task autocorrelation
+#
 # Swap the command for any other coding-agent CLI; nothing here is specific to
 # one vendor. `--permission-mode acceptEdits` is what keeps it non-interactive.
 name: circle-packing-claude
 task: circle_packing
 task_config:
-  n: 26
   # Seconds a candidate may run before it is classed as a `timeout` failure.
-  # Keep this generous. The score here is sum of radii with no timing term, so a
-  # slow candidate is not a worse one -- and a real agent asked to improve an
+  # Keep this generous. These tasks score the artifact, not its speed, so a slow
+  # candidate is not a worse one -- and a real agent asked to improve an
   # optimizer will reach for more restarts and more iterations, which is exactly
   # the kind of proposal a tight budget kills before it can be judged. At 60s
   # every depth-1 refinement in a Haiku round timed out, which measured the
   # evaluator's patience rather than the agent's idea.
   timeout: 240
+  n: 26                # circle_packing: number of circles
+  max_size: 400        # sum_difference: |A| ceiling
+  problem: 1           # autocorrelation: which of the three inequalities
+  max_grid: 4000       # autocorrelation: partition ceiling
   agent:
     command: >-
       claude -p --model claude-haiku-4-5 --permission-mode acceptEdits

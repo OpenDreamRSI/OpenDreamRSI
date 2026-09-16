@@ -49,7 +49,9 @@ def load_config(path: Optional[str], overrides: Dict[str, Any]) -> RSIConfig:
 def cmd_run(args: argparse.Namespace) -> int:
     config = load_config(args.config, {"mode": args.mode, "rounds": args.rounds,
                                        "name": args.name, "seed": args.seed,
-                                       "out_dir": args.out_dir})
+                                       "task": args.task, "out_dir": args.out_dir})
+    if args.task and not args.name:
+        config.name = f"{config.name}-{args.task}"   # keep run dirs distinct
     task, agent, developer = build_components(config)
     report = run_rsi(config, task=task, agent=agent, developer=developer)
     print(json.dumps({"name": config.name, "mode": config.mode,
@@ -418,6 +420,9 @@ def build_parser() -> argparse.ArgumentParser:
     r = common(sub.add_parser("run", help="run one recursive self-improvement loop"))
     r.add_argument("--mode", choices=[DREAM, FIXED], default=None)
     r.add_argument("--name", default=None)
+    r.add_argument("--task", choices=available_tasks(), default=None,
+                   help="override the config's task; every task ignores knobs it "
+                        "does not read, so one agent config can drive several")
     r.set_defaults(func=cmd_run)
 
     c = common(sub.add_parser("compare", help="Dream-RSI vs Recursive Fixed Exploration"))
