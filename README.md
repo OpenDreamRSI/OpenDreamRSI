@@ -469,6 +469,66 @@ trace and carrying the result into a world that does not resemble it. The growin
 pool is what keeps that honest, so the advantage really does come from the
 history *accumulating*, not merely from replaying one.
 
+### The whole loop, with a real model on both ends
+
+Everything above drives stage 3 with the mock developer. This runs it for real —
+Claude Haiku 4.5 as the discovery agent *and* as the policy developer, rewriting
+`method.py` from Listing 2 — against a fixed-mode control at the same budget:
+
+```bash
+dreamrsi run --config configs/circle_packing_claude.yaml --mode dream  --rounds 2
+dreamrsi run --config configs/circle_packing_claude.yaml --mode fixed  --rounds 2
+```
+
+```
+              round 1 (pi_1)   dreaming            round 2          total
+dream    9 calls  best 2.5711   v1 selected   6 calls  best 2.5981   15 calls
+fixed    9 calls  best 2.2365   --            9 calls  best 2.4040   18 calls
+```
+
+**The mechanism works end to end.** Haiku wrote a 233-line policy — matching
+neither shipped library policy, with its own `_schedule(beta)`, trajectory
+classification and `branch_failed_hard` imported from the API the prompt names.
+It loaded with no static-check warnings, beat the incumbent on the frozen history
+(`0.4259` vs `0.3611`), and the second revision scored `0.3056` — below the
+incumbent, correctly rejected, non-regression intact. Redeployed, it really did
+explore differently: 6 probes instead of 9.
+
+**The quality comparison is worthless, and it is worth seeing why.** Both arms
+ran the *identical* policy in round 1, before dreaming had done anything — and
+came out `2.5711` against `2.2365`, **0.335 apart**, purely from model
+nondeterminism. The final gap between the arms is `0.194`. The dreaming arm was
+further ahead before dreaming ran than it was at the end; its lead *shrank*.
+Quoting "2.5981 beats 2.4040" as a result would be reporting a head start.
+
+That gap is also an order of magnitude larger than the within-arm round-1 → round-2
+gain it would have to resolve (`0.027`). One paired run cannot see an effect that
+much smaller than its own noise, which is exactly why the seed-level comparison
+above exists — and why reaching that statistical strength with a real model, at
+9 calls and minutes per round, is a different order of expense.
+
+The **call saving is attributable**: 6 probes against 9 is a property of the
+selected policy's code, not of which candidates the agent happened to draw.
+
+One more caveat, visible in `beta_sweep.json` and worth more than the headline.
+The selection rested on a single point:
+
+```
+v0 (pi_1):  reward 0.3611 = auc 0.4444 - 0.25 x penalty 0.3333   batches [3,3,3]
+v1:         reward 0.4259 = auc 0.5556 - 0.25 x penalty 0.5185
+              beta 0.0/0.5  auc 0.4444  penalty 0.5556   batches [1,2,3,2,1]
+              beta 1.0      auc 0.5556  penalty 0.4444   batches [2,3,3,1]
+```
+
+`π₁` batches optimally for `W = 3`; the winner batches *worse* at every beta. It
+won on AUC at `beta = 1.0` alone — that is, it happened to reach the best cell one
+probe earlier on this one frozen trace. Every policy reaches attainment `1.0` on a
+nine-cell world, so there is nothing else to separate them, and the sweep flagged
+itself `non_degenerate: false`: beta moved neither attainment nor probe count.
+Selecting on a pool this small is the failure mode
+[the held-out split](#dreamings-replay-scores-are-optimistic-but-its-ranking-holds)
+is there to detect.
+
 ---
 
 ## Writing a policy
@@ -765,6 +825,13 @@ saving reproduces (1.75×, cheaper on 7/8) and the quality difference is
 undetectable once the two arms are given the same budget — but pinning the
 simulator pool to a single world removes even that, which is direct evidence for
 the *evolving* half of "evolving worlds".
+
+The full loop also runs with Claude Haiku 4.5 on both ends: it wrote a policy
+that beat the incumbent on the frozen history and explored differently when
+redeployed. The quality comparison from that run is **not** usable — the two arms
+were 0.335 apart after an identical round 1, before dreaming ran, which is larger
+than their final gap and an order of magnitude larger than the effect in
+question. Only the call saving is attributable there.
 
 **Not reproduced.** The paper's headline numbers. Table 1(a) needs
 Gemini-3.1-Pro / Gemini-3.7-Flash through the Gemini CLI, the SimpleTES
