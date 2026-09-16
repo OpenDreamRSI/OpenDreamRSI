@@ -103,6 +103,30 @@ class Observation:
         """
         return self.evaluated and self.error is None and self.fail_class == "ok"
 
+    # -- mapping-shaped access, because agents keep reaching for it -----------
+    def get(self, key: str, default: Any = None) -> Any:
+        """Attribute access, spelled as a mapping lookup.
+
+        ``observed()`` is documented as ``dict[str, Observation]`` and reads to
+        a model as a dict of dicts: in one measured four-round run, four of six
+        agent-written revisions crashed on ``obs.get("branch")`` -- each after a
+        full batch had already been revealed, so the mistake cost a whole
+        revision rather than a line. Supporting it is four lines and turns a
+        fatal misreading into a harmless one.
+
+        Deliberately a pure alias for attribute access, so there is one
+        semantics and not two: ``get("score")`` returns ``-inf`` exactly as
+        ``.score`` does, not the ``None`` that :meth:`to_dict` substitutes for
+        JSON's benefit.
+        """
+        return getattr(self, key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            raise KeyError(key) from None
+
     @property
     def is_repairable_failure(self) -> bool:
         return (not self.is_success) and self.fail_class in REPAIRABLE_FAIL_CLASSES

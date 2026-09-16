@@ -160,3 +160,65 @@ def test_repairable_failures_do_not_close_a_branch():
 def test_shallow_weak_scores_do_not_discard_a_branch():
     prefix = {"b0a0": obs(score=-5.0, delta_vs_baseline=-5.0)}
     assert branch_promising(prefix, 0, baseline=0.0)
+
+
+def test_an_observation_also_answers_to_mapping_access():
+    """`observed()` is a dict *of* Observations, and agents read it as a dict of dicts.
+
+    Measured: four of six agent-written revisions in one four-round run crashed
+    on `obs.get("branch")`, each after a full batch had already been revealed.
+    Supporting the spelling costs four lines and turns a fatal misreading into a
+    harmless one.
+    """
+    obs = Observation(cell_id="b1a2", branch=1, attempt=2, score=-3.5,
+                      fail_class="runtime", error="boom")
+    assert obs.get("branch") == 1 == obs["branch"]
+    assert obs.get("fail_class") == "runtime"
+    assert obs.get("nope") is None
+    assert obs.get("nope", "fallback") == "fallback"
+    with pytest.raises(KeyError):
+        obs["nope"]
+
+
+def test_mapping_access_is_a_pure_alias_not_a_second_semantics():
+    """`get("score")` must be `.score`, not `to_dict()`'s JSON-safe substitute."""
+    missing = Observation(cell_id="b0a0", branch=0, attempt=0)
+    assert missing.score == float("-inf")
+    assert missing.get("score") == float("-inf")
+    assert missing["score"] == float("-inf")
+    assert missing.to_dict()["score"] is None        # only JSON gets the None
+
+
+def test_a_policy_that_treats_observations_as_dicts_now_survives():
+    """The exact shape of the revisions that died: read the prefix, then branch."""
+    src = '''
+from see.policy.api import (LLMDesignedMethod, GridPlan, SimResult,
+                            _budget_done, _record_curve, finalize_result)
+NAME = "OptimalPolicy"
+
+
+class OptimalPolicy(LLMDesignedMethod):
+    NAME = "OptimalPolicy"
+
+    def solve(self, question, budget=None):
+        question.reset()
+        res = SimResult()
+        while not _budget_done(question, budget):
+            prefix = question.observed()
+            for cell, obs in prefix.items():          # the dict-of-dicts reading
+                if obs.get("branch") is None or obs.get("fail_class") != "ok":
+                    continue
+            batch = question.legal_actions()[:question.max_parallelism]
+            if not batch:
+                break
+            question.probe_batch(batch, on_reveal=lambda _: _record_curve(res, question))
+        return finalize_result(question, res)
+
+    def plan_grid(self, context):
+        return GridPlan(2, 2, "x")
+'''
+    spec = load_policy_source(src, name="dictish")
+    replay = world(branches=2, depth=2, max_parallelism=2, max_decision_rounds=8)
+    result = spec.instantiate({"beta": 0.5}).solve(replay, None)
+    assert result.total_probes > 0
+    assert "crash" not in result.stopped_reason
