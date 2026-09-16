@@ -23,6 +23,7 @@ This repository implements that loop end to end:
 | ② Construct Replay Simulator | `T_t` frozen and served back as a world | [`dreamrsi/world.py`](dreamrsi/world.py) |
 | ③ Dreaming-based Policy Improvement | `M` policy revisions replayed over the pool | [`dreamrsi/dreaming.py`](dreamrsi/dreaming.py) |
 | outer RSI loop | `π_{t+1} = π_t^{m*}`, redeployed online | [`dreamrsi/rsi.py`](dreamrsi/rsi.py) |
+| — | does any of it hold up? | [`dreamrsi/experiments/`](dreamrsi/experiments/) |
 
 **The authors have not released their code** (as of writing, `zhengkid/Dream-RSI`
 contains the paper and assets only). This is an independent reimplementation
@@ -72,8 +73,14 @@ round      fixed best  fixed calls       dream best  dream calls
 Same final quality, **1.58× fewer discovery-agent calls**. Rounds 1–3 are
 identical by construction: both methods deploy the same manually designed
 policy, and Dream-RSI only diverges once dreaming has found a version that beats
-the incumbent on the accumulated history. These are numbers from the offline
-synthetic task, not a reproduction of the paper's benchmarks — see
+the incumbent on the accumulated history.
+
+**That is one seed, and the quality tie does not survive more of them.** Across
+eight seeds the call saving holds (1.75× on average, cheaper on 7/8) but the
+quality tie is specific to seed 0 — run
+[`dreamrsi benchmark`](#across-seeds-the-saving-is-real-the-quality-tie-is-not)
+before quoting the table above. These are numbers from the offline synthetic
+task, not a reproduction of the paper's benchmarks — see
 [Faithfulness](#faithfulness).
 
 ---
@@ -157,6 +164,180 @@ candidate set, the selected `π_{t+1} = π_t^{m*}` satisfies `V^{m*} ≥ V^0`: t
 next online policy is never worse than the current one in average replay score
 on `H_t`. `tests/test_rsi_loop.py::test_selection_never_regresses_below_the_incumbent`
 asserts this on every round of a real run.
+
+Note what that guarantee does *and does not* say. It is an **in-pool** statement:
+the winner won on the worlds it was scored on. `π_{t+1}` is then deployed on
+`T_{t+1}`, which did not exist when it was selected. Whether the guarantee
+survives that is an empirical question, and [Evidence](#evidence) measures it.
+
+---
+
+## Evidence
+
+Everything above *implements* Dream-RSI. This section *interrogates* it: three
+offline commands ([`dreamrsi/experiments/`](dreamrsi/experiments/)) that test the
+claims the method's economy rests on rather than merely exercising the code.
+All numbers below are reproducible on the synthetic task with no model access.
+
+### The simulator is exact — inside the region that was explored
+
+```bash
+dreamrsi fidelity --config configs/synthetic.yaml
+```
+
+Deploys each shipped policy live at three betas, freezes the tree, **writes it to
+disk, loads it back** and replays the same policy over it:
+
+```
+              policy   beta   exact   rounds live/replay   probes live/replay      trace
+-----------------------------------------------------------------------------------------
+                pi_1   0.20    True                13/13                78/78      78/78
+                pi_1   0.62    True                13/13                78/78      78/78
+                pi_1   1.00    True                13/13                78/78      78/78
+  adaptive_portfolio   0.20    True                  5/5                27/27      27/78
+  adaptive_portfolio   0.62    True                13/13                78/78      78/78
+  adaptive_portfolio   1.00    True                13/13                78/78      78/78
+       uct_portfolio   0.20    True                  3/3                17/17      17/78
+       uct_portfolio   0.62    True                  4/4                24/24      24/78
+       uct_portfolio   1.00    True                  5/5                30/30      30/78
+-----------------------------------------------------------------------------------------
+exact replays: 9/9   (trace = recorded cells out of the 78-cell live grid)
+```
+
+Same batches in the same order, same revealed scores, same best score, same probe
+count — through serialisation, so it fails if freezing, storing or serving a world
+ever stops reproducing what the live run saw. **The stored history does not lie.**
+
+The second half of the claim is weaker, and the same command measures it. A
+replay world offers a strictly smaller menu than the live grid did: roots the
+online run never opened cannot be opened in a dream, and a branch cannot be
+refined past its recorded depth. Replaying every candidate over every frozen
+trace:
+
+```
+              policy  mean cov  worst cov  narrowed   cut off  actions left
+--------------------------------------------------------------------------
+                pi_1     0.983      0.900       2/9       4/9            24
+  adaptive_portfolio     0.983      0.900       2/9       4/9            24
+       uct_portfolio     0.985      0.917       2/9       2/9            12
+```
+
+While a replay is running it sees 98% of the actions the live grid would have
+offered — but **4 of 9 replays of `π₁` ended because the trace ran out, not
+because the policy chose to stop**, with 24 live actions still open. That is the
+restriction a coverage average cannot see: a replay dying of exhaustion takes no
+decision round at the moment it dies. Off-policy evaluation on a frozen history
+is exact about what it shows and silent about what it cannot.
+
+### Dreaming's replay scores are optimistic, but its *ranking* holds
+
+```bash
+dreamrsi generalize --config configs/synthetic.yaml --holdout-last 1
+```
+
+`H_t` is split temporally — dream on the earlier worlds, score on the later ones,
+the split the loop itself faces — and every candidate is scored on both sides.
+The candidates are dreaming's own: `v0` is the incumbent `π₁`, `v1` and `v2` the
+two library policies the mock developer proposes.
+
+```
+ version   pool reward  holdout reward        gap
+--------------------------------------------------
+       0      0.573317        0.489866  +0.083451
+       1      0.591895        0.513927  +0.077968
+       2      0.581720        0.510073  +0.071647
+--------------------------------------------------
+selected on pool: v1   best on holdout: v1
+selection regret: 0.000000   mean gap: +0.077689   rank corr: +1.000
+non-regression transfers to held-out worlds: True
+```
+
+Replay reward is **systematically optimistic** — every candidate scores ~0.078
+higher on the worlds it was selected on than on the world it was not (holding out
+two worlds instead of one widens the gap to +0.282). But the gap is roughly
+*uniform across candidates*, and selection depends only on their order: rank
+correlation is `+1.000` and selection regret is `0`. An oracle with access to the
+held-out world would have picked the same version.
+
+This is the distinction that matters for reading any offline number here. The
+absolute replay rewards should not be believed as predictions of live
+performance; the *comparison between candidates* is what dreaming needs, and on
+this task it survives.
+
+### Across seeds: the saving is real, the quality tie is not
+
+```bash
+dreamrsi benchmark --config configs/synthetic.yaml --seeds 0 1 2 3 4 5 6 7
+```
+
+The Section 4 comparison as a **paired** experiment — for a given seed both arms
+see the same task, agent and round-1 policy, so the within-pair difference
+isolates dreaming:
+
+```
+ seed     fixed best     dream best  dream @budget  fixed calls  dream calls   ratio
+-------------------------------------------------------------------------------------
+    0     -15.199224     -15.199224      -7.014438          468          297   1.576
+    1     -12.226702     -18.784452      -3.776649          468          252   1.857
+    2      -6.761106      -6.761106      -6.761106          468          468   1.000
+    3     -11.521382     -15.690958     -15.690958          468          285   1.642
+    4      -5.333137     -12.265277     -12.265277          468          226   2.071
+    5     -13.576364     -22.280591     -22.280591          468          235   1.991
+    6     -18.092499     -18.092499      -6.923388          468          250   1.872
+    7     -13.136500     -13.136500     -13.136500          468          238   1.966
+-------------------------------------------------------------------------------------
+quality @equal rounds: mean -3.295462  95% CI [-5.816839, -1.042394]  W/T/L 0/4/4
+quality @equal calls:  mean +0.999751  95% CI [-3.928387, +5.929276]  W/T/L 3/2/3
+calls (fixed / dream): mean 1.747x     95% CI [1.501, 1.946]  cheaper on 7/8
+```
+
+Two readings, and only the second is meaningful:
+
+* **At equal rounds** Dream-RSI loses on quality — `0/4/4`, and the interval
+  excludes zero. But an improved exploration policy stops earlier, so after the
+  same number of rounds the two arms have done *different amounts of work*.
+  Spending less is not the same as exploring better, and a lower score here says
+  almost nothing.
+* **At equal calls** — the dreaming arm run on until it has spent the fixed arm's
+  full 468-call budget — the difference disappears: `3/2/3`, with an interval
+  comfortably straddling zero.
+
+So on this offline stand-in the honest summary is: **dreaming reliably cuts
+discovery-agent calls (1.75×, 7/8 seeds) and, at matched budget, neither improves
+nor harms discovered quality.** The cost half of the paper's claim reproduces;
+the quality half is not detectable at this scale. The `compare` table in the
+Quickstart is the seed-0 slice of the first row above.
+
+No significance test is applied. With a mock agent on a synthetic task the
+sampling distribution is a property of this repository's stand-ins, not of
+Dream-RSI, so a p-value would be precision about the wrong population. The
+intervals show spread, not a certified effect.
+
+### The worlds have to evolve
+
+The paper's title claims two things, and the second is testable on its own.
+`--ablate` pins the simulator pool to a sliding window with `pool_window`, so the
+offline phase never accumulates evidence — it re-runs the whole comparison
+dreaming over only the newest world:
+
+```bash
+dreamrsi benchmark --config configs/synthetic.yaml --ablate
+```
+
+```
+        pool  W/T/L @rounds  W/T/L @budget  mean call ratio  cheaper seeds
+----------------------------------------------------------------------------
+  all of H_t          0/4/4          3/2/3            1.747            7/8
+      last 1          0/3/5          0/3/5            1.874            8/8
+```
+
+Restricted to one world, dreaming **never once beats** fixed exploration at
+matched budget and loses on 5 of 8 seeds — while cutting calls slightly *harder*
+(1.87×, 8/8). That combination is the signature of a policy that has learned to
+stop early rather than to explore well: it is selecting against a single frozen
+trace and carrying the result into a world that does not resemble it. The growing
+pool is what keeps that honest, so the advantage really does come from the
+history *accumulating*, not merely from replaying one.
 
 ---
 
@@ -325,6 +506,15 @@ the selected batch and the revealed outcomes — the between-round feedback the
 improvement prompt tells the agent to diagnose from, and never to read inside
 `solve()`.
 
+The [Evidence](#evidence) commands write outside that tree, because their
+artifacts are measurements of a run rather than inputs to one:
+
+```
+runs/<name>-fidelity/fidelity.json       per-probe trajectory diff + support audit
+runs/<name>-generalization.json          per-version pool vs held-out rewards
+runs/<name>-benchmark/benchmark.json     per-seed rows and the aggregate summary
+```
+
 ---
 
 ## CLI
@@ -337,6 +527,20 @@ dreamrsi dream   --policy P.py --pool runs/x/history   # offline improvement onl
 dreamrsi inspect runs/x/history/r0001_dream/trace.json -v
 dreamrsi tasks | dreamrsi prompt exploration | dreamrsi prompt policy
 ```
+
+The [Evidence](#evidence) commands:
+
+```bash
+dreamrsi fidelity   --config configs/synthetic.yaml            # is replay exact?
+dreamrsi generalize --config configs/synthetic.yaml --holdout-last 1
+dreamrsi generalize --pool runs/x/history --holdout-last 2     # audit your own run
+dreamrsi benchmark  --config configs/synthetic.yaml --seeds 0 1 2 3
+dreamrsi benchmark  --config configs/synthetic.yaml --ablate   # + evolving-worlds ablation
+```
+
+`fidelity` exits non-zero if any replay is inexact, so it works as a regression
+gate. `benchmark` gives the dreaming arm `3 × --rounds` rounds so it can spend the
+fixed arm's full call budget; `--equal-budget-rounds` overrides that.
 
 Progress goes to stderr; stdout stays machine-readable.
 
@@ -360,29 +564,48 @@ scikit-learn reference and the synthetic instance grid for `lasso`. These are
 reasonable readings, not the authors' choices, and anything that depends on them
 (absolute reward values, say) will not match the original.
 
+**Measured, not assumed.** Three claims the method depends on are checked rather
+than taken on trust, and they do not all come out the same way — see
+[Evidence](#evidence). A frozen history replays **exactly** (9/9, through
+serialisation), so the simulator does not lie; but it is exact only about the
+region that was explored, and 4 of 9 off-policy replays ended because the trace
+ran out rather than because the policy chose to stop. Replay rewards are
+systematically **optimistic** about held-out worlds (+0.078 at one held-out
+world, +0.282 at two) while preserving the candidate *ranking* that selection
+actually uses, so selection regret is zero here. Across eight seeds the call
+saving reproduces (1.75×, cheaper on 7/8) and the quality difference is
+undetectable once the two arms are given the same budget — but pinning the
+simulator pool to a single world removes even that, which is direct evidence for
+the *evolving* half of "evolving worlds".
+
 **Not reproduced.** The paper's headline numbers. Table 1(a) needs
 Gemini-3.1-Pro / Gemini-3.7-Flash through the Gemini CLI, the SimpleTES
 instance suite and six held-out downstream datasets; Table 1 (math) needs 1k
 generations per task; Figure 4 needs KernelBench on GPUs. None of that runs in
-this repository without your own model access and hardware. The demo numbers
-above come from the offline synthetic task and show only that the *mechanism*
-behaves as described: dreaming selects a better policy on the accumulated
-history, and redeploying it reaches the same quality with fewer
-discovery-agent calls.
+this repository without your own model access and hardware. The numbers above
+come from the offline synthetic task and show only that the *mechanism* behaves
+as described — dreaming selects a policy that reaches comparable quality with
+fewer discovery-agent calls. They are evidence about this reimplementation and
+its mock agents, not about Dream-RSI's performance on the paper's benchmarks.
 
 ---
 
 ## Tests
 
 ```bash
-python3 -m pytest -q          # 97 passed, 1 skipped
+python3 -m pytest -q          # 115 passed, 1 skipped
 ```
 
 They cover tree invariants, world legality and cost accounting, both objectives,
 the policy API and its static checks, every shipped policy at three betas, the
 task evaluators' scoring and failure classification, the extracted solver, the
-prompts, the CLI, and the full loop including the non-regression guarantee. The
-single skip is the discovered solver's compile-and-run test, which needs Eigen:
+prompts, the CLI, and the full loop including the non-regression guarantee.
+[`tests/test_experiments.py`](tests/test_experiments.py) covers the evidence
+layer: replay exactness through serialisation (and that a tampered trace or a
+diverging trajectory is *caught* rather than averaged away), support coverage on
+complete and partial traces, the temporal split and its regret arithmetic, and
+budget matching. The single skip is the discovered solver's compile-and-run
+test, which needs Eigen:
 
 ```bash
 EIGEN_INCLUDE=/path/to/eigen3 python3 -m pytest -q

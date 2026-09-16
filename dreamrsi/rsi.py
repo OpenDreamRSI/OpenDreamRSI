@@ -22,12 +22,14 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
+from .agents import make_discovery_agent, make_policy_developer
 from .agents.base import DiscoveryAgent, PolicyDeveloper
 from .dreaming import DEFAULT_BETA_GRID, dream
 from .objective import DEFAULT_LAMBDA
 from .online import run_online_cycle
 from .policy.loader import load_policy_source
 from .storage import RunLayout, write_json
+from .tasks import make_task
 from .tasks.base import Task
 from .types import GridPlanningContext
 from .world import SimulatorPool
@@ -57,6 +59,10 @@ class RSIConfig:
     betas: Sequence[float] = DEFAULT_BETA_GRID
     lam: float = DEFAULT_LAMBDA
     seed: int = 0
+    #: Ablation knob: dream over only the newest ``pool_window`` worlds instead
+    #: of all of ``H_t``.  ``None`` keeps the paper's evolving-worlds setting,
+    #: where the simulator pool grows with every completed round.
+    pool_window: Optional[int] = None
     out_dir: str = "runs"
     discovery_agent: str = "mock"
     policy_developer: str = "mock"
@@ -73,6 +79,20 @@ class RSIConfig:
 def _progress(*args: Any) -> None:
     """Progress goes to stderr; stdout stays machine-readable."""
     print(*args, file=sys.stderr, flush=True)
+
+
+def build_components(config: RSIConfig):
+    """The task, discovery agent and policy developer ``config`` asks for.
+
+    ``FIXED`` gets no developer at all, which is what makes it the paper's
+    controlled baseline rather than a dreaming run with the result ignored.
+    """
+    task = make_task(config.task, config.task_config)
+    agent = make_discovery_agent(config.discovery_agent, task,
+                                 {"seed": config.seed, **config.task_config.get("agent", {})})
+    developer = (make_policy_developer(config.policy_developer)
+                 if config.mode == DREAM else None)
+    return task, agent, developer
 
 
 def run_rsi(config: RSIConfig, *, task: Task, agent: DiscoveryAgent,
@@ -160,11 +180,12 @@ def run_rsi(config: RSIConfig, *, task: Task, agent: DiscoveryAgent,
 
         # -- offline phase: dreaming over the whole accumulated pool ---------
         if config.mode == DREAM and developer is not None and t < config.rounds:
-            log(f"[{config.name}]   dreaming over {len(pool)} world(s), "
+            dream_pool = _dream_pool(pool, config)
+            log(f"[{config.name}]   dreaming over {len(dream_pool)} world(s), "
                 f"M={config.revisions} revisions")
             out = dream(
                 current_source=spec.source,
-                pool=pool,
+                pool=dream_pool,
                 developer=developer,
                 revisions=config.revisions,
                 out_dir=round_dir,
@@ -179,6 +200,7 @@ def run_rsi(config: RSIConfig, *, task: Task, agent: DiscoveryAgent,
             chosen = out["best"]
             record["dream"] = {
                 "selected_version": chosen.version,
+                "pool_worlds": len(dream_pool),
                 "improved": bool(out["improved"]),
                 "incumbent_reward": out["incumbent"].summary.reward,
                 "selected_reward": chosen.summary.reward,
@@ -213,6 +235,22 @@ def run_rsi(config: RSIConfig, *, task: Task, agent: DiscoveryAgent,
     }
     write_json(os.path.join(layout.root, "report.json"), report)
     return report
+
+
+def _dream_pool(pool: SimulatorPool, config: RSIConfig) -> SimulatorPool:
+    """The worlds this round's offline phase is allowed to dream over.
+
+    Dream-RSI dreams over the whole accumulated history, which is what makes the
+    simulator improve as the loop runs.  ``pool_window`` exists to ablate exactly
+    that: restricted to the newest ``K`` worlds, the pool stops growing and the
+    offline phase can only ever see a sliding window of recent history.
+    """
+    window = config.pool_window
+    if not window or window >= len(pool):
+        return pool
+    return SimulatorPool(pool.trees[-int(window):],
+                         max_parallelism=pool.max_parallelism,
+                         max_decision_rounds=pool.max_decision_rounds)
 
 
 def _baked_beta(source: str, fallback: float) -> float:
