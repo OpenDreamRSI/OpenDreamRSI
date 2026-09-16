@@ -177,7 +177,8 @@ survives that is an empirical question, and [Evidence](#evidence) measures it.
 Everything above *implements* Dream-RSI. This section *interrogates* it: three
 offline commands ([`dreamrsi/experiments/`](dreamrsi/experiments/)) that test the
 claims the method's economy rests on rather than merely exercising the code.
-All numbers below are reproducible on the synthetic task with no model access.
+Every number below is reproducible on the synthetic task with no model access,
+except the one subsection that needs a real model and says so.
 
 ### The simulator is exact — inside the region that was explored
 
@@ -228,6 +229,80 @@ because the policy chose to stop**, with 24 live actions still open. That is the
 restriction a coverage average cannot see: a replay dying of exhaustion takes no
 decision round at the moment it dies. Off-policy evaluation on a frozen history
 is exact about what it shows and silent about what it cannot.
+
+### …and against a model that cannot repeat itself
+
+The mock discovery agent is seeded, so the result above proves less than it
+looks: of course a recording of a deterministic process reproduces it. The claim
+only earns its keep when the environment that produced the history *cannot* be
+re-run — which is the only situation in which anyone would want a replay
+simulator in the first place.
+
+So: the same policy, the same grid, the same task, deployed live twice through
+**Claude Haiku 4.5** — 2 branches × 1 refinement on `circle_packing` at
+`n = 26`, baseline `2.1667`. This one needs model access, so it is a script
+rather than a subcommand, and it exits non-zero if any replay is inexact:
+
+```bash
+python3 scripts/real_replay_fidelity.py --config configs/circle_packing_claude.yaml
+```
+
+```
+                       b0a0     b0a1      b1a0      b1a1      best
+live run 1 (252s)      fail     fail    2.438966  2.497535  2.497535
+live run 2 (324s)      fail     fail      fail    2.504756  2.504756
+                                       identical across the two runs: False
+```
+
+Same code, same policy, different discoveries. Now freeze each of those trees,
+write it to disk, load it back, and replay the same policy over it:
+
+```
+run 1: exact -- rounds 2/2, probes 4/4, best 2.497535 == 2.497535, 0 score mismatches
+run 2: exact -- rounds 2/2, probes 4/4, best 2.504756 == 2.504756, 0 score mismatches
+```
+
+Both exact, and exact about the failures too — a `runtime` error and a
+`correctness` violation replay as those same failures rather than as missing
+cells, which matters because a policy that prunes on failure is reading them.
+**The environment is not reproducible; the history it leaves behind is.** That is
+precisely the property the method's economy needs: you cannot re-run the
+expensive thing, but you can replay it perfectly, at no cost, as often as you
+like.
+
+A fuller round on the same task and model — 3 branches × 2 refinements, **9 real
+discovery-agent calls, 558s** — produces a world worth replaying:
+
+```
+  b0a0  2.586775  ok           b0a1  --  timeout      b0a2  2.499615  ok
+  b1a0  --  correctness        b1a1  --  timeout      b1a2  --  timeout
+  b2a0  2.560934  ok           b2a1  --  timeout      b2a2  --  timeout
+```
+
+Best `2.5868` against the `2.1667` baseline — **+19%**, found by Haiku replacing
+the grid packing with SLSQP over centres and radii jointly. Replaying the shipped
+policies over that frozen world costs nothing:
+
+```
+              policy  probes       best
+                pi_1       9     2.5868
+  adaptive_portfolio       8     2.5868
+       uct_portfolio       8     2.5868
+```
+
+Same ceiling, one probe cheaper. Read that as a demonstration that the machinery
+works on a real world, not as a measured saving — on a nine-cell grid there is
+almost nothing to save, and the seed-level evidence for the saving is
+[further down](#across-seeds-the-saving-is-real-the-quality-tie-is-not).
+
+The failure mix is worth more than the scores. That round ran with a 60-second
+candidate budget, and every depth-1 refinement blew it: asked to improve a
+packing optimizer, the agent reached for more restarts and more iterations, and
+the evaluator stopped them before it could judge them. Nothing was wrong with the
+proposals — the budget was measuring the evaluator's patience. `b0a2` then
+recovered to a valid `2.4996` from a parent that had timed out, which is the
+failure taxonomy working as intended. The shipped config now allows 240s, so
+rerunning it will not reproduce this table.
 
 ### Dreaming's replay scores are optimistic, but its *ranking* holds
 
@@ -604,10 +679,12 @@ reasonable readings, not the authors' choices, and anything that depends on them
 
 **Measured, not assumed.** Three claims the method depends on are checked rather
 than taken on trust, and they do not all come out the same way — see
-[Evidence](#evidence). A frozen history replays **exactly** (9/9, through
-serialisation), so the simulator does not lie; but it is exact only about the
-region that was explored, and 4 of 9 off-policy replays ended because the trace
-ran out rather than because the policy chose to stop. Replay rewards are
+[Evidence](#evidence). A frozen history replays **exactly** (9/9 through
+serialisation with the mock agent, and again on two live Claude Haiku 4.5 runs
+that did not reproduce each other), so the simulator does not lie; but it is
+exact only about the region that was explored, and 4 of 9 off-policy replays
+ended because the trace ran out rather than because the policy chose to stop.
+Replay rewards are
 systematically **optimistic** about held-out worlds (+0.078 at one held-out
 world, +0.282 at two) while preserving the candidate *ranking* that selection
 actually uses, so selection regret is zero here. Across eight seeds the call
