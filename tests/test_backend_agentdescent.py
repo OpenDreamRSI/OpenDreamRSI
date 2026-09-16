@@ -400,3 +400,72 @@ def test_the_engine_still_measures_the_batch_wall_clock(tmp_path):
         max_decision_rounds=8, world_id="w", cycle=1)
     assert out["world"].wall_clock > 0.0
     assert out["manifest"]["seconds"] > 0.0
+
+
+def test_a_world_full_of_ties_picks_the_same_best_cell():
+    """Several attempts failing to beat the baseline land on the *same* score.
+
+    That is the common case on a hard task, not a corner one: in the recorded
+    `sum_difference` world four of nine attempts scored exactly 1.0, because an
+    arithmetic progression is what a policy falls back to. `best_node` scans in
+    node order with a strict `>`, so the first of them wins -- and a `max` over
+    `(score, index)` returns the last instead, which no world without ties can
+    tell apart.
+    """
+    from dreamrsi.backends.agentdescent_replay import AgentDescentSimulatorPool
+    from dreamrsi.backends.agentdescent_tree import to_agentdescent
+    from dreamrsi.world import SimulatorPool
+
+    tree = DiscoveryTree(world_id="ties", baseline_score=1.0, task="sum_difference")
+    scores = [("b0a0", 1.0), ("b0a1", float("-inf")), ("b1a0", 1.0),
+              ("b1a1", 0.5), ("b2a0", 1.0), ("b2a1", 1.0)]
+    for i, (cid, score) in enumerate(scores):
+        branch, attempt = int(cid[1]), int(cid[3])
+        failed = score == float("-inf")
+        tree.add(Node(cell_id=cid, branch=branch, attempt=attempt,
+                      parent_id=ROOT_ID if attempt == 0 else cell_id(branch, attempt - 1),
+                      seq=i, score=score, evaluated=True, valid=not failed,
+                      fail_class="timeout" if failed else "ok",
+                      error="exceeded" if failed else None))
+
+    native = SimulatorPool([tree]).summary()
+    agentdescent = AgentDescentSimulatorPool([to_agentdescent(tree)],
+                                             task="sum_difference").summary()
+    assert native == agentdescent
+    assert native[0]["best_cell"] == "b0a0"       # the first, not the last
+    assert native[0]["successful"] == 5           # a failure is not "has a score"
+
+
+def test_the_recorded_paper_worlds_replay_the_same_on_both_engines():
+    """The synthetic task has no ties and no mixed failure classes; these do.
+
+    Skipped unless a real run is present, because the worlds are recordings of
+    Claude Haiku 4.5 on the Appendix A tasks rather than fixtures.
+    """
+    from dreamrsi.backends.agentdescent_replay import AgentDescentSimulatorPool
+    from dreamrsi.backends.agentdescent_tree import to_agentdescent
+    from dreamrsi.dreaming import evaluate_policy
+    from dreamrsi.world import SimulatorPool
+
+    paths = [
+        "runs/circle-packing-claude/history/r0001_fixed/trace.json",
+        "runs/circle-packing-claude-sum_difference/history/r0001_fixed/trace.json",
+        "runs/circle-packing-claude-autocorrelation/history/r0001_fixed/trace.json",
+        "runs/lasso-claude/history/r0001_fixed/trace.json",
+    ]
+    trees = [DiscoveryTree.load(p) for p in paths if os.path.exists(p)]
+    if not trees:
+        pytest.skip("no recorded paper-task run in runs/")
+
+    native = SimulatorPool(trees, max_parallelism=3, max_decision_rounds=12)
+    agentdescent = AgentDescentSimulatorPool([to_agentdescent(t) for t in trees],
+                                             max_parallelism=3, max_decision_rounds=12)
+    assert native.summary() == agentdescent.summary()
+    for name, source in CANDIDATES:
+        spec = load_policy_source(source, name=name, strict=False)
+        a = evaluate_policy(spec, native, betas=(0.0, 0.5, 1.0),
+                            base_config={"beta": 0.62})
+        b = evaluate_policy(spec, agentdescent, betas=(0.0, 0.5, 1.0),
+                            base_config={"beta": 0.62})
+        assert a.summary.to_dict() == b.summary.to_dict(), name
+        assert [p.to_dict() for p in a.points] == [p.to_dict() for p in b.points], name

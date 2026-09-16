@@ -222,22 +222,45 @@ class AgentDescentSimulatorPool:
                 for t in self.trees]
 
     def summary(self) -> List[Dict[str, Any]]:
+        """The same rows :meth:`dreamrsi.world.SimulatorPool.summary` produces.
+
+        Both the tie-break and the success criterion are copied deliberately.
+        ``DiscoveryTree.best_node`` scans in node order with a strict ``>``, so
+        the *first* node holding the best score wins; taking a ``max`` over
+        ``(score, index)`` instead returns the *last*, which is invisible until a
+        world has ties -- and a real one does, because several attempts failing
+        to beat the baseline all land on exactly the same score.
+        """
         out = []
         for world in self.worlds():
-            best = max(((n.score, n.index) for n in world.adt.nodes[1:]
-                        if n.score is not None), default=None)
+            best_score, best_index = float("-inf"), None
+            for node in world.adt.nodes[1:]:
+                if node.score is not None and float(node.score) > best_score:
+                    best_score, best_index = float(node.score), node.index
             out.append({
                 "world_id": world.world_id, "task": world.task,
                 "nodes": len(world.tree), "branch_count": world.branch_count,
                 "refine_count": world.refine_count,
                 "successful": sum(1 for n in world.adt.nodes[1:]
-                                  if (n.detail or {}).get("fail_class", "ok") == "ok"
-                                  and n.score is not None),
+                                  if _successful(n)),
                 "baseline_score": world.baseline_score,
-                "ceiling": None if best is None else best[0],
-                "best_cell": None if best is None else cell_of(world.adt, best[1]),
+                "ceiling": None if best_index is None else best_score,
+                "best_cell": (None if best_index is None
+                              else cell_of(world.adt, best_index)),
             })
         return out
+
+
+def _successful(node) -> bool:
+    """``evaluated and error is None and fail_class == "ok"`` -- the tree's rule.
+
+    Not "has a score": the failure taxonomy distinguishes an attempt that was
+    measured and is bad from one that broke, and both can carry a number.
+    """
+    detail = node.detail or {}
+    return (bool(detail.get("evaluated", node.score is not None))
+            and not detail.get("error")
+            and str(detail.get("fail_class", "ok")) == "ok")
 
 
 def _coords(cid: str):
