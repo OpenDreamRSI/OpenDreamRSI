@@ -67,5 +67,53 @@ The paper reports this solver beating `sklearn` and `glmnet` on six held-out
 downstream datasets (Gisette, RCV1, DNA, Leukemia, Colon, Duke Breast) on the
 authors' hardware, with OpenMP. This repository ships synthetic instances and
 its own timing harness, so the numbers you get are **not** comparable to Table
-1(a) — in particular, a single-threaded build on a machine without libomp gives
-up most of what the program is designed to exploit.
+1(a).
+
+A measured example, on a 4-core Linux box **with** OpenMP and `-march=native`
+both available — so the usual "it built single-threaded" excuse does not apply:
+
+```
+$ python3 scripts/verify_discovered_lasso.py          # the defaults: 9 instances, 3 timing
+sklearn baseline   R_search = 8.247
+discovered solver  R_search = 0.630                   # 13x slower
+objective check passed on 6/6 held-out instances
+```
+
+The correctness result is the meaningful one: the transcription is faithful. The
+timing is an artefact of **which instances get timed**. `timing_names` takes the
+*last* `n_timing` entries of `INSTANCE_GRID`, and this script defaults to
+`--instances 9`, so the timed instances are `(1000, 200)`, `(1000, 500)` and
+`(1000, 1000)` — every one of them `p <= n`. The `p >> n` regimes in the grid
+(`(200, 500)`, `(500, 1000)`, `(300, 2000)`) are cut off by the `[:9]` slice.
+Strong-rule screening and a cached Gram matrix are precisely the machinery that
+pays off when `p >> n` and screening can discard most features; on dense
+`p <= n` instances there is little to screen and the Gram construction is
+overhead. So the default invocation times this solver in the regime it was
+*least* designed for.
+
+Running the full grid instead (`--instances 17 --timing 5`, matching
+`configs/lasso.yaml`) does not produce a better timing either, because it stops
+earlier:
+
+```
+FAILED (correctness):
+n200_p500_s10_c0.5_seed12354: objective check failed at k=40:
+  F_k(w) = 0.272044540 > 0.272042398 + 1e-06
+```
+
+That is a `2.1e-06` excess against a `1e-06` margin, on a *correlated* `p >> n`
+instance (`corr = 0.5`). Two things are true about it and both matter:
+
+* the solver really is slightly loose here — against a properly converged
+  solution it sits about `3.1e-06` above the optimum;
+* **the yardstick is not converged either.** `lasso_path` builds the reference
+  with scikit-learn's default tolerance and emits `ConvergenceWarning` on these
+  instances; re-solving `k=40` to `tol=1e-14` shows the reference is itself
+  `9.8e-07` above the true optimum — the same order as the acceptance margin it
+  defines. An absolute `1e-06` bar measured against a reference carrying `~1e-06`
+  of its own slack is not a sharp test.
+
+The correlated regimes are this repository's invention, not the paper's (see
+[Faithfulness](../../README.md#faithfulness)), so none of this is evidence about
+the published solver on the published benchmarks. It is a caution about reading
+any number this harness produces for it.

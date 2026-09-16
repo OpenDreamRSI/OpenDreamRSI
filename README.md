@@ -270,7 +270,62 @@ precisely the property the method's economy needs: you cannot re-run the
 expensive thing, but you can replay it perfectly, at no cost, as often as you
 like.
 
-A fuller round on the same task and model — 3 branches × 2 refinements, **9 real
+### What a small model actually achieves on the four tasks
+
+One round each, 3 branches × 2 refinements (9 real calls; `lasso` 2 × 1, 4 calls),
+Claude Haiku 4.5. **Read this as evidence about the harness, not about the
+paper**: the paper runs 1k generations per math task with Gemini-3.1-Pro /
+3.7-Flash, so at 9 calls with a small fast model this is a ~100× smaller
+experiment answering a different question — does the machinery work end to end on
+real tasks, and does the failure taxonomy carry real information?
+
+| task | baseline | best found | verdict |
+|---|---|---|---|
+| `circle_packing` | `2.1667` | **`2.5868`** | **+19%** — SLSQP over centres and radii jointly |
+| `sum_difference` | `1.0` | `1.0` | tie, never beaten |
+| `autocorrelation` | `−2.0` | `−2.0` | tie, never beaten |
+| `lasso` | `19.956` | `10.239` | `0.51×` — pure-Python route only |
+
+The baselines are programs, not constants: `prepare()` writes `baseline/method.py`
+and scores it with the same evaluator as every candidate. They are also not all
+equally weak, which is what makes "tie" mean different things above. The circle
+packing baseline is a 6×6 grid of equal circles — easy to beat. The
+`sum_difference` baseline is the arithmetic progression `[0..11]`, and an AP has
+`|A+A| = |A-A| = 23`, so `Γ` is *exactly* `1.0`; beating it requires an MSTD set,
+which is genuinely hard. Every successful candidate came back symmetric:
+
+```
+  b0a0  |A|=12  |A+A|= 23  |A-A|= 23   MSTD=False     (the baseline set, rediscovered)
+  b1a0  |A|=40  |A+A|= 79  |A-A|= 79   MSTD=False
+  b2a0  |A|=91  |A+A|=359  |A-A|=361   MSTD=False     Γ = 0.996
+  b2a2  |A|=50  |A+A|= 99  |A-A|= 99   MSTD=False
+```
+
+One of those is worth dwelling on. `b1a2`'s proposal is titled *"Asymmetric
+Pair-Cluster Construction"* and correctly cites its sibling's measured score —
+so cross-branch history reading works — yet it emitted the 12-element arithmetic
+progression. The proposal and the program disagree, which is exactly why Listing
+1 says **"Trust the measured result over what the proposal claims about itself"**
+and why the trace records the score rather than the claim.
+
+The `lasso` round is the one where the agent surprised us. Given only the problem
+statement it found the native route on its own:
+
+```
+b0a0  0.904753  ok             naive pure-Python path
+b1a0  10.238503 ok             warm-started coordinate descent (within 2x of sklearn)
+b0a1  --        compile_other  NameError: njit          -- numba is not installed
+b1a1  --        compile_other  Eigen headers not found  -- it wrote CPP_CODE + -O3 -march=native
+```
+
+`b1a1` escalated from Python to C++ unprompted, and the harness classified the
+result as `compile_other` — the class the prompt calls "normally repairable",
+which is the correct reading: the idea was sound, the environment lacked a
+header.
+
+### A fuller world
+
+A fuller round on `circle_packing` — 3 branches × 2 refinements, **9 real
 discovery-agent calls, 558s** — produces a world worth replaying:
 
 ```
@@ -582,10 +637,20 @@ task:
 python3 scripts/verify_discovered_lasso.py        # needs g++ and Eigen
 ```
 
-It compiles and passes the benchmark's objective check on every held-out
-instance. See [`discovered/lasso_path/README.md`](discovered/lasso_path/README.md)
-for how the listing was transcribed and why the timings here are **not**
-comparable to Table 1(a).
+It compiles and passes the benchmark's objective check on all six held-out
+instances of the default 9-instance grid — which is the evidence that the
+847-line transcription is faithful.
+
+It does **not** pass the full 17-instance grid: on a correlated `p >> n` instance
+it exceeds the `1e-6` margin by `2.1e-6`. Nor is it fast here — 13× slower than
+scikit-learn on the default timing instances, on a box that had both OpenMP and
+`-march=native`. Neither result says anything about the published solver on the
+published benchmarks, and both have identifiable causes in *this* harness (the
+timing split excludes the `p >> n` regimes the solver is built for; the
+correctness reference is itself un-converged by about the size of the margin it
+defines). [`discovered/lasso_path/README.md`](discovered/lasso_path/README.md)
+works through both, and why the timings here are **not** comparable to
+Table 1(a).
 
 ---
 
@@ -673,9 +738,17 @@ Appendix A.
 `attainment` normalised against the trace ceiling; `pareto.auc` as the envelope
 area over the sweep; the default `β₁`, `β₂`, `λ` and beta grid; the manifest
 schema; the static policy checks; the mock agents; the synthetic task; the
-scikit-learn reference and the synthetic instance grid for `lasso`. These are
-reasonable readings, not the authors' choices, and anything that depends on them
-(absolute reward values, say) will not match the original.
+scikit-learn reference and the synthetic instance grid for `lasso`; **the
+baseline program of every task** — the grid packing, the arithmetic progression,
+the uniform density. These are reasonable readings, not the authors' choices, and
+anything that depends on them (absolute reward values, say) will not match the
+original.
+
+The baselines deserve singling out, because "beat the baseline" is only as
+meaningful as the baseline. They are not uniformly weak: the circle-packing grid
+is easy to beat, while the `sum_difference` arithmetic progression scores exactly
+`Γ = 1.0` and beating it requires constructing an MSTD set. A tie against one is
+not a tie against the other.
 
 **Measured, not assumed.** Three claims the method depends on are checked rather
 than taken on trust, and they do not all come out the same way — see
@@ -708,7 +781,8 @@ its mock agents, not about Dream-RSI's performance on the paper's benchmarks.
 ## Tests
 
 ```bash
-python3 -m pytest -q          # 115 passed, 1 skipped
+python3 -m pytest -q          # 121 passed, 1 skipped
+EIGEN_INCLUDE=/path/to/eigen3 python3 -m pytest -q   # 122 passed -- nothing skipped
 ```
 
 They cover tree invariants, world legality and cost accounting, both objectives,
