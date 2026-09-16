@@ -193,3 +193,51 @@ def test_discovered_solver_compiles_and_passes_the_objective_check(tmp_path):
     assert res.fail_class == "ok", res.error
     assert res.valid and res.score > 0
     assert res.diagnostics["route"] == "native"
+
+
+def test_every_task_states_its_time_limit_in_the_problem():
+    """The limit is enforced by the evaluator, so it belongs in the statement.
+
+    A candidate that exceeds it is classed `timeout` and scores nothing. Leaving
+    the number out does not make the task freer -- it makes an enforced rule
+    invisible, and the agent pays cells to rediscover it.
+    """
+    from dreamrsi.tasks import available, make_task
+
+    for name in available():
+        task = make_task(name, {})
+        if not getattr(task, "timeout", None):
+            continue
+        statement = task.problem_statement() + task.budget_note()
+        assert "Resource limit" in statement, name
+        assert f"{task.timeout:g} seconds" in statement, name
+
+
+def test_a_task_without_a_time_limit_says_nothing(tmp_path):
+    """The note is not boilerplate; a task with no limit must not claim one."""
+    from dreamrsi.tasks.base import Task
+
+    class _Untimed(Task):
+        name = "untimed"
+
+        def problem_statement(self):
+            return "# Untimed\n"
+
+        def baseline_source(self):
+            return "print('{}')\n"
+
+        def evaluate(self, node_dir):
+            from dreamrsi.tasks.base import EvalResult
+
+            return EvalResult(score=0.0, valid=True)
+
+    assert _Untimed().budget_note() == ""
+
+
+def test_the_limit_reaches_the_file_the_agent_actually_reads(tmp_path):
+    task = make_task("circle_packing", {"n": 26, "timeout": 240})
+    paths = task.prepare(str(tmp_path))
+    with open(paths["problem_file"], "r", encoding="utf-8") as fh:
+        problem = fh.read()
+    assert "240 seconds" in problem
+    assert "Maximise sum_i r_i" in problem        # the original statement survives

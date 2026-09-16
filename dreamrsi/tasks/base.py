@@ -77,12 +77,35 @@ class Task:
         """Source of the reference implementation placed in ``baseline/``."""
         raise NotImplementedError
 
+    def budget_note(self) -> str:
+        """The evaluator's time limit, stated as part of the problem.
+
+        It already *is* part of the scoring contract -- a candidate that runs
+        longer is classed ``timeout`` and scores nothing -- so leaving it out of
+        ``problem.md`` does not make the task freer, it makes the rule invisible.
+        Measured on ``circle_packing``, which scores ``sum r_i`` with no timing
+        term and so gives an agent no reason to think slow is bad: a round of
+        nine attempts spent three of them discovering the wall by hitting it,
+        and the attempt that recovered did so by reading a sibling's
+        ``exceeded 240s`` and budgeting against it explicitly. Stating the number
+        up front is the same information, one round earlier and for free.
+        """
+        seconds = getattr(self, "timeout", None)
+        if not seconds:
+            return ""
+        return (f"\n## Resource limit\n\n"
+                f"`{self.eval_program}` must finish within **{seconds:g} seconds**. "
+                f"Exceeding it scores nothing at all, however good the answer would "
+                f"have been, so treat the running time as a constraint rather than a "
+                f"preference.\n")
+
     def prepare(self, run_dir: str) -> Dict[str, str]:
         """Materialise ``problem.md`` and ``baseline/`` under ``run_dir``."""
         os.makedirs(run_dir, exist_ok=True)
         problem_file = os.path.join(run_dir, "problem.md")
         with open(problem_file, "w", encoding="utf-8") as fh:
             fh.write(self.problem_statement())
+            fh.write(self.budget_note())
         baseline_dir = os.path.join(run_dir, "baseline")
         os.makedirs(baseline_dir, exist_ok=True)
         with open(os.path.join(baseline_dir, self.eval_program), "w", encoding="utf-8") as fh:
