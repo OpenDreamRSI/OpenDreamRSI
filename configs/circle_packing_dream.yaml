@@ -1,0 +1,53 @@
+# Section 4's controlled comparison on Appendix A Problem 3, with a real model.
+#
+#   dreamrsi run --config configs/circle_packing_dream.yaml --mode dream
+#   dreamrsi run --config configs/circle_packing_dream.yaml --mode fixed
+#
+# Same task, same agent, same initialisation, same per-round budget; the only
+# difference is whether the exploration policy may improve.
+#
+# The grid is the point. An earlier four-round run on a 3x3 grid selected the
+# incumbent in all three dreaming phases, and the objective says why.
+# Selection maximises `pareto.reward = auc - lam * parallel_penalty`, and `auc`
+# is the area under the upper envelope of attainment-vs-probes: it pays for
+# reaching a good score *early*, which is to say it ranks policies by the order
+# they open cells in. On nine cells with W=3 there are only three batches and
+# every policy reveals the same nine cells in nearly the same order, so every
+# policy earns nearly the same auc and there is nothing to rank. The two
+# revisions that did behave differently stopped early, gave up attainment, and
+# scored strictly worse than the incumbent -- correctly.
+#
+# 6 x 5 = 30 cells against a 48-probe ceiling (8 rounds x 6 workers) buys five
+# or more decision rounds, which is the first point where dropping a dead
+# branch and spending its workers elsewhere moves the envelope.
+name: circle-packing-dream
+task: circle_packing
+task_config:
+  n: 26
+  timeout: 240
+  agent:
+    command: >-
+      claude -p --model claude-haiku-4-5 --permission-mode acceptEdits
+      --add-dir {history_dir}
+      --allowedTools Write Edit Read Glob Grep
+    timeout: 900
+
+mode: dream
+rounds: 3              # two dreaming phases: pi_1 -> pi_2 -> pi_3
+revisions: 2           # M -- each one is a real policy-developer call
+
+max_parallelism: 6     # W
+max_decision_rounds: 8
+branch_count: 6
+refine_count: 4        # 6 x 5 = 30 cells per round
+budget: null
+
+beta: 0.62
+betas: [0.0, 0.5, 1.0]
+lam: 0.25
+seed: 0
+
+discovery_agent: cli
+policy_developer: cli
+engine: agentdescent
+out_dir: runs
