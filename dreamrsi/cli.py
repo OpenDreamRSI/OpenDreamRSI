@@ -64,6 +64,16 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def cmd_compare(args: argparse.Namespace) -> int:
     """Run Recursive Fixed Exploration and Dream-RSI under identical budgets."""
+    if args.reports:
+        from .experiments.arms import compare_arms, render
+        dream_dir, fixed_dir = args.reports
+        comparison = compare_arms(dream_dir, fixed_dir)
+        print(render(comparison))
+        if args.out_dir:
+            write_json(os.path.join(args.out_dir, "arm-comparison.json"),
+                       comparison.to_dict())
+        return 0
+
     base = load_config(args.config, {"rounds": args.rounds, "seed": args.seed,
                                      "engine": args.engine, "out_dir": args.out_dir})
     results = {}
@@ -429,6 +439,12 @@ def build_parser() -> argparse.ArgumentParser:
     r.set_defaults(func=cmd_run)
 
     c = common(sub.add_parser("compare", help="Dream-RSI vs Recursive Fixed Exploration"))
+    c.add_argument("--reports", nargs=2, metavar=("DREAM_DIR", "FIXED_DIR"),
+                   default=None,
+                   help="analyse two runs that already finished instead of "
+                        "running them; a real comparison takes hours per arm "
+                        "and the arms are usually run separately so they do "
+                        "not contend for the same cores")
     c.set_defaults(func=cmd_compare)
 
     e = sub.add_parser("eval", help="beta-sweep a policy over a pool of frozen traces")
